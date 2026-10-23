@@ -77,13 +77,13 @@ def get_offers(
 def _find_offers(
     *, product_id: str, lat: float, lng: float, radius: float,
     max_price: int | None = None, installment: bool = False,
-    express: bool = False, open_now: bool = False, result_limit: int = 40,
+    express: bool = False, open_now: bool = False, result_limit: int | None = None,
 ):
     with database(readonly=True) as connection:
         rows = connection.execute(_offer_query(), (product_id,)).fetchall()
 
     results = [shop_result_from_row(row, lat, lng) for row in rows]
-    results = [item for item in results if item.distance_km <= radius]
+    results = [item for item in results if item.distance_km is not None and item.distance_km <= radius]
     if max_price is not None:
         results = [
             item for item in results
@@ -95,7 +95,8 @@ def _find_offers(
         results = [item for item in results if item.shop.express_delivery is True]
     if open_now:
         results = [item for item in results if item.open_now.value is True]
-    return sorted(results, key=lambda item: item.distance_km)[:max(1, min(result_limit, 500))]
+    results = sorted(results, key=lambda item: item.distance_km)
+    return results[:max(1, result_limit)] if result_limit is not None else results
 
 
 @tool(args_schema=CompareShopsInput)
@@ -284,7 +285,7 @@ def send_inquiry(
         raise ValueError("استعلام بدون تأیید صریح کاربر ارسال نمی‌شود. لطفاً پیش‌نویس پیام را به کاربر نشان بده و تأیید بگیر.")
 
     with database() as connection:
-        row = connection.execute("SELECT * FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        row = connection.execute("SELECT * FROM inquiries WHERE id = ? AND (persona IS NULL OR persona NOT LIKE 'mock_contact:%')", (inquiry_id,)).fetchone()
         if row is None:
             raise ValueError(f"استعلام با شناسه {inquiry_id} یافت نشد")
 
@@ -529,7 +530,7 @@ def send_inquiry_batch(
 def get_inquiry_status(inquiry_id: str) -> dict:
     """دریافت آخرین وضعیت و تایم‌لاین یک استعلام شبیه‌سازی‌شده."""
     with database(readonly=True) as connection:
-        row = connection.execute("SELECT * FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        row = connection.execute("SELECT * FROM inquiries WHERE id = ? AND (persona IS NULL OR persona NOT LIKE 'mock_contact:%')", (inquiry_id,)).fetchone()
         if not row:
             raise ValueError(f"استعلام با شناسه {inquiry_id} یافت نشد")
         shop_row = connection.execute("SELECT * FROM shops WHERE id = ?", (row["shop_id"],)).fetchone()
@@ -585,7 +586,7 @@ def list_inquiries(
     limit: int = 10,
 ) -> dict:
     """فهرست استعلام‌های ثبت‌شده در جلسه یا فروشگاه برای نظارت و پنل شبیه‌ساز."""
-    query = "SELECT * FROM inquiries WHERE 1=1"
+    query = "SELECT * FROM inquiries WHERE (persona IS NULL OR persona NOT LIKE 'mock_contact:%')"
     params: list[object] = []
     if shop_id:
         query += " AND shop_id = ?"
@@ -630,7 +631,7 @@ def cancel_inquiry(inquiry_id: str, reason: str | None = None) -> dict:
     now_iso = datetime.now(timezone.utc).isoformat()
     note = reason or "استعلام توسط کاربر لغو شد."
     with database() as connection:
-        row = connection.execute("SELECT * FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        row = connection.execute("SELECT * FROM inquiries WHERE id = ? AND (persona IS NULL OR persona NOT LIKE 'mock_contact:%')", (inquiry_id,)).fetchone()
         if not row:
             raise ValueError(f"استعلام با شناسه {inquiry_id} یافت نشد")
         answer = {"in_stock": False, "price": None, "note": note}
@@ -649,7 +650,7 @@ def cancel_inquiry(inquiry_id: str, reason: str | None = None) -> dict:
 def follow_up_inquiry(inquiry_id: str, escalate_channel: bool = True) -> dict:
     """پیگیری فعال استعلام؛ ارتقای کانال در صورت بی‌پاسخ بودن و بازگرداندن وضعیت."""
     with database() as connection:
-        row = connection.execute("SELECT * FROM inquiries WHERE id = ?", (inquiry_id,)).fetchone()
+        row = connection.execute("SELECT * FROM inquiries WHERE id = ? AND (persona IS NULL OR persona NOT LIKE 'mock_contact:%')", (inquiry_id,)).fetchone()
         if not row:
             raise ValueError(f"استعلام با شناسه {inquiry_id} یافت نشد")
 
@@ -935,7 +936,7 @@ def get_shop_location_hint(
             result = next((item for item in matching_offers if item.shop.id == shop_id), None)
         with database(readonly=True) as connection:
             inquiry_row = connection.execute(
-                "SELECT payload_json FROM inquiries WHERE shop_id=? AND product_id=? ORDER BY created_at DESC LIMIT 1",
+                "SELECT payload_json FROM inquiries WHERE shop_id=? AND product_id=? AND (persona IS NULL OR persona NOT LIKE 'mock_contact:%') ORDER BY created_at DESC LIMIT 1",
                 (shop_id, product_id),
             ).fetchone()
         if inquiry_row:

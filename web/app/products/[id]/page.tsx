@@ -1,17 +1,99 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { ArrowRight, MapPin, Store } from "lucide-react";
-import { searchOffers } from "@/lib/api";
-import { formatDistance, formatPrice, openLabel } from "@/lib/format";
+import { formatDate, formatDistance, formatNumber, formatPrice, openLabel } from "@/lib/format";
+import { rememberContactSelection } from "@/lib/contact";
+import { LAST_RESULTS_KEY } from "@/lib/search-state";
 import type { ConversationState, Product, ShopResult } from "@/lib/contracts";
-const MapView=dynamic(()=>import("@/components/leaflet-map"),{ssr:false});
-const DEFAULT={lat:35.7219,lng:51.4097,label:"مرکز تهران"};
-export default function ProductDetailPage(){const params=useParams<{id:string}>();const[id,setId]=useState("");const[product,setProduct]=useState<Product|null>(null);const[offers,setOffers]=useState<ShopResult[]>([]);const[center,setCenter]=useState<{lat:number;lng:number;label?:string|null}>(DEFAULT);const[busy,setBusy]=useState(true);const[error,setError]=useState("");
- useEffect(()=>{if(!params.id)return;setId(params.id);let stopped=false;async function load(){try{const response=await fetch(`/api/products/${encodeURIComponent(params.id)}`);if(!response.ok)throw new Error("محصول در دیتاست پیدا نشد.");const body=await response.json();const p=body.product as Product;setProduct(p);let ws:any={};try{ws=JSON.parse(localStorage.getItem("torob-in-person.workspace.v1")||"{}")}catch{}const conv=(ws.conversation||{}) as Partial<ConversationState>;const loc=conv.location||DEFAULT;setCenter(loc);const results=await searchOffers({productId:p.id,location:loc,radius:conv.radiusKm||4,maxPrice:conv.budget??null,installment:Boolean(conv.filters?.installment),express:Boolean(conv.filters?.express),openNow:Boolean(conv.filters?.openNow)});if(!stopped)setOffers(results)}catch(e){if(!stopped)setError(e instanceof Error?e.message:"بارگذاری اطلاعات ناموفق بود.")}finally{if(!stopped)setBusy(false)}}void load();return()=>{stopped=true}},[params.id]);
- function openMap(){const key="torob-in-person.workspace.v1";let ws:any={};try{ws=JSON.parse(localStorage.getItem(key)||"{}")}catch{}ws.marketplaceProduct=product;ws.marketplaceResults=offers;ws.conversation={...(ws.conversation||{}),location:center,selectedProductId:product?.id};localStorage.setItem(key,JSON.stringify(ws));location.href=`/map?product=${encodeURIComponent(id)}`}
- return <main className="catalog-page" dir="rtl"><header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/chat">دستیار خرید</Link><Link href="/products">همه محصولات</Link></nav></header>{error?<div className="catalog-state">{error}</div>:!product||busy?<div className="catalog-state">در حال دریافت مشخصات و آفرها…</div>:<><div className="detail-head"><Link href="/products"><ArrowRight/> برگشت به نتایج</Link><span className="eyebrow">اطلاعات محصول · دیتاست ترب</span><h1>{product.titleFa}</h1><p>{product.brand||"برند نامشخص"} · {product.category||"دسته نامشخص"}</p><div className="detail-price">قیمت ثبت‌شده از {offers.length?formatPrice(Math.min(...offers.map(o=>o.offer.price??Infinity)),"تومان"):"نامشخص"}<small>قیمت دیتاست، تأیید زنده‌ی فروشنده نیست؛ موجودی تأییدنشده است.</small></div><button className="detail-map-button" onClick={openMap}><MapPin/> دیدن فروشگاه‌ها روی نقشه ({offers.length})</button></div><section className="detail-content"><div className="detail-image">{product.images?.[0]?<img src={product.images[0]} alt=""/>:<span>تصویر موجود نیست</span>}</div><div><h2>مشخصات ثبت‌شده</h2>{Object.entries(product.specs||{}).length?<dl>{Object.entries(product.specs||{}).map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>:<p>مشخصات ساختاریافته‌ای ثبت نشده است.</p>}</div></section><section className="detail-offers"><h2><Store/> فروشگاه‌های دارای آفر ({offers.length})</h2>{offers.map(o=><article key={o.offer.id} className="nearby-shop"><b>{o.shop.displayName}</b><span>{formatPrice(o.offer.price,o.offer.priceUnit)} · {formatDistance(o.distanceKm)} · {openLabel(o.openNow)}</span><small>{o.shop.addressText||"نشانی نامشخص"} · {o.offer.priceUpdatedAt||"زمان تغییر قیمت نامشخص"}</small><small>موجودی تأییدنشده</small></article>)}{!offers.length&&<p>در محدوده و فیلترهای فعلی آفر مکانی پیدا نشد.</p>}</section></>}</main>
+
+export default function ProductDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const [product, setProduct] = useState<Product | null>(null);
+  const [minPrice, setMinPrice] = useState<number | null>(null);
+  const [offers, setOffers] = useState<ShopResult[]>([]);
+  const [back, setBack] = useState("/products");
+  const [mapUrl, setMapUrl] = useState(`/map?product_ids=${encodeURIComponent(id)}`);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState("");
+  const [offersError, setOffersError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBusy(true); setError(""); setOffersError(""); setProduct(null); setOffers([]); setImageFailed(false);
+    const mapParams = new URLSearchParams({ product_ids: id });
+    try {
+      const previous = localStorage.getItem(LAST_RESULTS_KEY);
+      if (previous && /^\/products(?:\?|$)/.test(previous)) {
+        setBack(previous);
+        const params = new URL(previous, location.origin).searchParams;
+        for (const key of ["min_price", "max_price", "lat", "lng", "radius_km", "city", "location", "installment", "express", "open_now"]) {
+          if (params.has(key)) mapParams.set(key, params.get(key)!);
+        }
+      }
+      const workspace = JSON.parse(localStorage.getItem("torob-in-person.workspace.v1") || "{}");
+      const conversation = workspace.conversation as Partial<ConversationState> | undefined;
+      if (conversation?.location && !mapParams.has("lat")) {
+        mapParams.set("lat", String(conversation.location.lat)); mapParams.set("lng", String(conversation.location.lng));
+      }
+      if (!mapParams.has("radius_km")) mapParams.set("radius_km", String(conversation?.radiusKm ?? 4));
+    } catch { /* Standalone product URLs work without saved context. */ }
+    setMapUrl(`/map?${mapParams}`);
+    async function load() {
+      try {
+        const response = await fetch(`/api/products/${encodeURIComponent(id)}`, { signal: controller.signal, cache: "no-store" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "محصول در دیتاست پیدا نشد.");
+        if (controller.signal.aborted) return;
+        setProduct(body.product); setMinPrice(body.minPrice);
+        try {
+          const workspace = JSON.parse(localStorage.getItem("torob-in-person.workspace.v1") || "{}");
+          if (workspace.conversation) {
+            const changed = workspace.conversation.selectedProductId !== id;
+            workspace.conversation.selectedProductId = id;
+            workspace.conversation.preferences ||= {};
+            workspace.conversation.preferences._advisor = { ...(workspace.conversation.preferences._advisor || {}), status: "selected_product" };
+            workspace.conversation.preferences.searchProfile = { ...(workspace.conversation.preferences.searchProfile || {}), stage: "selected_product" };
+            if (changed) { workspace.conversation.selectedShopIds = []; workspace.conversation.selectedOfferIds = []; }
+            workspace.marketplaceProduct = body.product;
+            localStorage.setItem("torob-in-person.workspace.v1", JSON.stringify(workspace));
+          }
+        } catch { /* Details remain usable without browser storage. */ }
+        try {
+          const result = await fetch(`/api/map/offers?${mapParams}`, { signal: controller.signal, cache: "no-store" });
+          const body = await result.json();
+          if (!result.ok) throw new Error(typeof body.detail === "string" ? body.detail : "دریافت پیشنهادهای فروشگاه‌ها انجام نشد.");
+          if (!controller.signal.aborted) setOffers(body.results);
+        } catch (problem) {
+          if (!controller.signal.aborted) setOffersError(problem instanceof Error ? problem.message : "دریافت پیشنهادها انجام نشد.");
+        }
+      } catch (problem) {
+        if (!controller.signal.aborted) setError(problem instanceof Error ? problem.message : "بارگذاری محصول انجام نشد.");
+      } finally { if (!controller.signal.aborted) setBusy(false); }
+    }
+    void load();
+    return () => controller.abort();
+  }, [id, retry]);
+
+  const shops = new Map<string, ShopResult[]>();
+  for (const result of offers) {
+    const group = shops.get(result.shop.id);
+    if (group) group.push(result);
+    else shops.set(result.shop.id, [result]);
+  }
+  return <main className="catalog-page" dir="rtl">
+    <header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/chat">ادامه چت</Link><Link href={back}>نتایج جست‌وجو</Link></nav></header>
+    {error ? <div className="catalog-state" role="alert"><b>{error}</b><button onClick={() => setRetry(value => value + 1)}>تلاش دوباره</button><Link href={back}>بازگشت به نتایج</Link></div> : busy ? <div className="catalog-state" aria-busy="true">در حال دریافت مشخصات و پیشنهادها…</div> : product && <>
+      <div className="detail-head"><Link href={back}><ArrowRight size={16} /> بازگشت به نتایج با فیلترهای قبلی</Link><span className="eyebrow">اطلاعات محصول · دیتاست ترب</span><h1>{product.titleFa}</h1><p>{product.brand || "برند نامشخص"} · {product.category || "دسته نامشخص"}</p><div className="detail-price">{formatPrice(minPrice)}<small>کمترین قیمت ثبت‌شده در دیتاست؛ قیمت روز و موجودی تأییدنشده‌اند.</small></div><Link className="detail-map-button" href={mapUrl}><MapPin size={18} /> مشاهده فروشگاه‌های این محصول روی نقشه</Link></div>
+      <section className="detail-content"><div className="detail-image">{product.images?.[0] && !imageFailed ? <img src={product.images[0]} alt={product.titleFa} onError={() => setImageFailed(true)} /> : <span>تصویر موجود نیست</span>}</div><div><h2>مشخصات ثبت‌شده</h2>{Object.entries(product.specs || {}).length ? <dl>{Object.entries(product.specs || {}).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl> : <p>مشخصات ساختاریافته ثبت نشده است.</p>}</div></section>
+      <section id="offers" className="detail-offers"><h2><Store size={20} /> {formatNumber(shops.size)} فروشگاه · {formatNumber(offers.length)} پیشنهاد مطابق محدوده و فیلترها</h2><p>نام فروشگاه‌های فاقد نام واقعی با شناسه نمایش داده می‌شود. شماره‌های ساختگی نمایش داده نمی‌شوند.</p>
+        {offersError ? <div className="catalog-state" role="alert"><b>{offersError}</b><button onClick={() => setRetry(value => value + 1)}>تلاش دوباره</button></div> : Array.from(shops.entries()).map(([shopId, results]) => <article key={shopId} className="nearby-shop"><b>{results[0].shop.displayName}</b><span>{results[0].distanceKm == null ? "مختصات معتبر موجود نیست؛ فاصله و قرارگیری در شعاع قابل بررسی نیست." : formatDistance(results[0].distanceKm)} · {openLabel(results[0].openNow)}</span><small>{results[0].shop.addressText || "نشانی ثبت نشده است."}</small>{results.map((result, index) => <div className="map-list-offer" key={result.offer.id || `${shopId}-${index}`}><span>{formatPrice(result.offer.price, result.offer.priceUnit)} · قیمت دیتاست</span><small>{formatDate(result.offer.priceUpdatedAt)} · موجودی تأییدنشده</small>{result.offer.id && <Link className="offer-contact-action" href={`/contact?offer_id=${encodeURIComponent(result.offer.id)}`} onClick={() => rememberContactSelection({ product, shop: result.shop, offer: result.offer })}>بررسی قیمت و تماس با فروشگاه</Link>}</div>)}</article>)}
+        {!offersError && !offers.length && <div className="catalog-state"><b>پیشنهادی در محدوده و بودجه فعلی ثبت نشده است.</b><p>محدوده را روی نقشه تغییر بده یا بودجه جست‌وجو را اصلاح کن.</p><Link href={mapUrl}>تغییر محدوده روی نقشه</Link><Link href={back}>تغییر فیلترهای محصولات</Link></div>}
+      </section>
+    </>}
+  </main>;
 }

@@ -60,10 +60,19 @@ def response_from_messages(messages: list[AnyMessage]) -> AssistantResponse:
     text, question = parse_model_text(message_text(final_message))
     if question:
         text = f"{text}\n\n{question}"
+    search_args = next((call.get("args", {})
+                        for message in reversed(messages) if isinstance(message, AIMessage)
+                        for call in reversed(message.tool_calls) if call.get("name") == "search_products"), None)
+    search_filters = search_args.get("filters") if search_args else None
+    if not isinstance(search_filters, dict):
+        search_filters = {}
     return AssistantResponse(
         text=text,
         cards=cards_from_tool_messages(messages),
         clarification_question=question,
+        search_query=str(search_args.get("query", "")) if search_args is not None else None,
+        search_category=(search_args.get("category") or search_filters.get("category")) if search_args else None,
+        search_min_price=search_filters.get("min_price"),
     )
 
 

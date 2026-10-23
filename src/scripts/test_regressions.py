@@ -34,12 +34,16 @@ class PurchaseRegressionTests(unittest.TestCase):
         })
         self.assertIn("بودجه", followup["clarification_question"])
 
-    def test_advisor_searches_when_budget_and_use_are_known(self) -> None:
+    def test_advisor_summarizes_before_search_when_budget_and_use_are_known(self) -> None:
         result = ShoppingAgent._advisor_gate({
             "messages": [HumanMessage(content="هدفون برای موزیک تا ۵ میلیون تومان")],
             "conversation": {},
         })
-        self.assertNotIn("clarification_question", result)
+        self.assertIn("خلاصه ترجیحات", result["clarification_question"])
+        confirmed = ShoppingAgent._advisor_gate({
+            "messages": [HumanMessage(content="بله")], "conversation": result["conversation"],
+        })
+        self.assertNotIn("clarification_question", confirmed)
 
     def test_persian_decimal_budget_and_installment_negation(self) -> None:
         state = ConversationState()

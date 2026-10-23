@@ -17,7 +17,7 @@ export async function* streamChat(
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, history: request.history.slice(-12).map(turn => ({ ...turn, content: turn.content.slice(0, 4000) })) }),
     signal,
   });
 

@@ -24,7 +24,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { FilterPanel, type FilterValues } from "@/components/filter-panel";
-import { NearbyOffers } from "@/components/nearby-offers";
 import { ResponseCards } from "@/components/response-cards";
 import { getApiHealth, resolveLocation, searchOffers, streamChat } from "@/lib/api";
 import { formatNumber, parseToman } from "@/lib/format";
@@ -135,6 +134,8 @@ export function ShoppingWorkspace() {
   }, [activeTools]);
 
   useEffect(() => {
+    const initialQuery = new URLSearchParams(window.location.search).get("q");
+    if (initialQuery) setDraft(initialQuery);
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -152,6 +153,14 @@ export function ShoppingWorkspace() {
         if (data.marketplaceProduct) setMarketplaceProduct(data.marketplaceProduct);
         if (data.marketplaceResults) setMarketplaceResults(data.marketplaceResults);
         if (data.userId) setUserId(data.userId);
+        const lastResults = window.localStorage.getItem("torob-last-results-url");
+        if (data.conversation && data.filters && lastResults?.startsWith("/products")) {
+          const params = new URL(lastResults, window.location.origin).searchParams;
+          const budget = params.has("max_price") ? parseToman(params.get("max_price") ?? "") : null;
+          const searchFilters = { installment: params.get("installment") === "true", express: params.get("express") === "true", openNow: params.get("open_now") === "true" };
+          setConversation({ ...data.conversation, budget, filters: searchFilters });
+          setFilters({ ...data.filters, budget: budget === null ? "" : formatNumber(budget), ...searchFilters });
+        }
       } else {
         setUserId(`web-${window.crypto.randomUUID()}`);
       }
@@ -291,6 +300,12 @@ export function ShoppingWorkspace() {
     setConversation(nextConversation);
     const nextHistory = [...history, { role: "user" as const, content: message }];
     let replyText = "";
+    let replyCards: AssistantCard[] = [];
+    let pendingSearchQuery: string | null = null;
+    let pendingSearchCategory: string | null = null;
+    let pendingSearchMinPrice: number | null = null;
+    let finalConversation = nextConversation;
+    let needsClarification = false;
     const controller = new AbortController();
     activeChatRequest.current = controller;
     const generation = chatGeneration.current;
@@ -312,6 +327,40 @@ export function ShoppingWorkspace() {
         setHistory([...nextHistory, { role: "assistant", content: replyText }]);
       } else {
         setHistory(nextHistory);
+      }
+      const searchChanged = finalConversation.budget !== nextConversation.budget
+        || JSON.stringify(finalConversation.filters) !== JSON.stringify(nextConversation.filters)
+        || finalConversation.radiusKm !== nextConversation.radiusKm
+        || JSON.stringify(finalConversation.location) !== JSON.stringify(nextConversation.location);
+      if (pendingSearchQuery === null && searchChanged && !needsClarification) {
+        const previous = window.localStorage.getItem("torob-last-results-url");
+        if (previous?.startsWith("/products")) pendingSearchQuery = new URL(previous, window.location.origin).searchParams.get("q") ?? "";
+      }
+      // Finish and persist the stream before leaving; the final conversation event carries budget/state.
+      if (pendingSearchQuery !== null) {
+        const params = new URLSearchParams({ q: pendingSearchQuery, from: "chat" });
+        if (pendingSearchCategory) params.set("category", pendingSearchCategory);
+        if (pendingSearchMinPrice !== null) params.set("min_price", String(pendingSearchMinPrice));
+        if (finalConversation.budget !== null) params.set("max_price", String(finalConversation.budget));
+        const point = finalConversation.location;
+        if (point) { params.set("lat", String(point.lat)); params.set("lng", String(point.lng)); }
+        params.set("radius_km", String(finalConversation.radiusKm));
+        for (const [key, value] of Object.entries(finalConversation.filters)) {
+          if (value) params.set(key === "openNow" ? "open_now" : key, "true");
+        }
+        const resultsUrl = `/products?${params}`;
+        const finalMessages: ChatEntry[] = [...messages, userEntry, {
+          id: replyId, role: "assistant", content: replyText, cards: replyCards, resultsUrl,
+        }];
+        const finalFilters = { ...filters, budget: finalConversation.budget ? formatNumber(finalConversation.budget) : "",
+          radiusKm: finalConversation.radiusKm, location: point?.label ?? filters.location,
+          openNow: Boolean(finalConversation.filters.openNow), installment: Boolean(finalConversation.filters.installment), express: Boolean(finalConversation.filters.express) };
+        setMessages(finalMessages);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ conversation: finalConversation,
+          filters: finalFilters, messages: finalMessages, history: [...nextHistory, {role: "assistant", content: replyText}],
+          userId, marketplaceProduct, marketplaceResults } satisfies SavedWorkspace));
+        window.localStorage.setItem("torob-last-results-url", resultsUrl);
+        router.push(resultsUrl);
       }
     } catch (requestError) {
       if (generation !== chatGeneration.current) return;
@@ -345,23 +394,18 @@ export function ShoppingWorkspace() {
       }
       if (event.type === "text_delta" && event.text) updateMessage(targetId, { content: event.text });
       if (event.type === "response" && event.response) {
+        needsClarification = Boolean(event.response.clarificationQuestion);
         onResponse(event.response.text);
         const productCard = event.response.cards.find((card): card is Extract<AssistantCard,{kind:"product_cards"}> => card.kind === "product_cards");
-        const visibleCards = productCard
-          ? event.response.cards.filter((card) => card.kind !== "product_cards")
-          : event.response.cards;
+        const visibleCards = event.response.cards.filter(isConversationCard);
+        replyCards = visibleCards;
         updateMessage(targetId, { content: productCard
           ? `${event.response.text}\n\n${formatNumber(productCard.products.length)} گزینه در جستجوی اولیه پیدا شد. نتایج کامل در صفحه محصولات باز می‌شود.`
           : event.response.text, cards: visibleCards });
-        if (productCard?.products.length) {
-          window.sessionStorage.setItem("torob-search-products", JSON.stringify({
-            query: message,
-            searchQuery: [...history.filter((turn) => turn.role === "user").slice(-3).map((turn) => turn.content), message].join(" "),
-            products: productCard.products,
-            createdAt: Date.now(),
-          }));
-          router.push(`/products?q=${encodeURIComponent(message)}&from=chat`);
-        }
+        if (event.response.searchQuery != null) pendingSearchQuery = event.response.searchQuery;
+        else if (productCard) pendingSearchQuery = productCard.products[0]?.category ?? message;
+        pendingSearchCategory = event.response.searchCategory ?? null;
+        pendingSearchMinPrice = event.response.searchMinPrice ?? null;
         if (selectionVersion.current === selectionVersionAtRequest) {
           setConversation((current) => ({
             ...current,
@@ -376,6 +420,7 @@ export function ShoppingWorkspace() {
             ? { ...event.conversation.location }
             : null,
         };
+        finalConversation = updatedConversation;
         if (selectionVersion.current === selectionVersionAtRequest) {
           setConversation(updatedConversation);
           setFilters((current) => ({
@@ -390,6 +435,7 @@ export function ShoppingWorkspace() {
         }
       }
       if (event.type === "error") {
+        needsClarification = true;
         const messageText = event.message ?? "پاسخ‌گویی با مشکل روبه‌رو شد.";
         onResponse(messageText);
         updateMessage(targetId, { content: messageText, cards: [] });
@@ -584,10 +630,38 @@ export function ShoppingWorkspace() {
     );
   }
 
-  function handleApplyFilters() {
-    const product = marketplaceProduct ?? findProduct(messages, selectedProductId);
-    if (!product || offersBusy) return;
-    void searchForProduct(product, filters, conversation);
+  async function handleApplyFilters() {
+    if (offersBusy || busy) return;
+    setLocationBusy(true);
+    setError("");
+    try {
+      let point = conversation.location ?? DEFAULT_LOCATION;
+      if (filters.location.trim() && filters.location.trim() !== point.label) {
+        const resolved = await resolveLocation(filters.location.trim());
+        point = { ...resolved, label: resolved.label ?? filters.location.trim() };
+      }
+      const next = { ...conversation, location: point, budget: parseToman(filters.budget),
+        radiusKm: filters.radiusKm, filters: {openNow: filters.openNow, installment: filters.installment, express: filters.express} };
+      setConversation(next);
+      const previous = window.localStorage.getItem("torob-last-results-url");
+      if (previous) {
+        const url = new URL(previous, window.location.origin);
+        url.searchParams.delete("page");
+        if (next.budget !== null) url.searchParams.set("max_price", String(next.budget));
+        else url.searchParams.delete("max_price");
+        url.searchParams.set("lat", String(point.lat)); url.searchParams.set("lng", String(point.lng));
+        url.searchParams.set("radius_km", String(next.radiusKm));
+        for (const [key, value] of Object.entries(next.filters)) {
+          const param = key === "openNow" ? "open_now" : key;
+          if (value) url.searchParams.set(param, "true"); else url.searchParams.delete(param);
+        }
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ conversation: next, filters, messages, history, userId, marketplaceProduct, marketplaceResults } satisfies SavedWorkspace));
+        window.localStorage.setItem("torob-last-results-url", `${url.pathname}${url.search}`);
+        router.push(`${url.pathname}${url.search}`);
+      } else setNotice("ترجیحات ذخیره شد؛ گفت‌وگو را ادامه بده.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "محدوده پیدا نشد؛ نام محله را اصلاح کن.");
+    } finally { setLocationBusy(false); }
   }
 
   function handleFilterChange(nextFilters: FilterValues) {
@@ -667,8 +741,7 @@ export function ShoppingWorkspace() {
     };
     setFilters(nextFilters);
     setConversation(nextConversation);
-    const product = marketplaceProduct ?? findProduct(messages, selectedProductId);
-    if (product) void searchForProduct(product, nextFilters, nextConversation);
+    setNotice("فیلترها پاک شدند؛ برای به‌روزرسانی نتایج، اعمال فیلترها را بزن.");
   }
 
   function startNewChat() {
@@ -688,6 +761,8 @@ export function ShoppingWorkspace() {
     setMarketplaceError("");
     setMarketplaceProduct(null);
     setMarketplaceResults([]);
+    window.localStorage.removeItem("torob-last-results-url");
+    window.localStorage.removeItem("torob-product-compare.v1");
     setConversation((current) => ({ ...INITIAL_CONVERSATION, location: current.location, radiusKm: current.radiusKm }));
     composer.current?.focus();
   }
@@ -793,7 +868,7 @@ export function ShoppingWorkspace() {
                         ) : null}
                         {entry.role === "assistant" && entry.cards && entry.cards.length > 0 && (
                           <ResponseCards
-                            cards={entry.cards}
+                            cards={entry.cards.filter(isConversationCard)}
                             selectedOfferIds={selectedOfferIds}
                             onChooseProduct={handleChooseProduct}
                             onAskInquiry={handleAskInquiry}
@@ -803,6 +878,7 @@ export function ShoppingWorkspace() {
                             onCancelInquiry={handleCancelInquiry}
                           />
                         )}
+                        {entry.resultsUrl && <Link className="all-products-link" href={entry.resultsUrl}>مشاهده نتایج کامل و نقشه فروشگاه‌ها</Link>}
                       </div>
                     </article>
                   ))}
@@ -814,6 +890,7 @@ export function ShoppingWorkspace() {
                     </div>
                   )}
                 </div>
+              )}
             </div>
 
             {notice && !busy && (
@@ -854,7 +931,7 @@ export function ShoppingWorkspace() {
             idPrefix="desktop"
             values={filters}
             busy={busy || locationBusy || offersBusy}
-            hasSelectedProduct={Boolean(selectedProductId)}
+            hasSelectedProduct={true}
             onChange={handleFilterChange}
             onUseCurrentLocation={handleUseCurrentLocation}
             onApply={handleApplyFilters}
@@ -877,7 +954,7 @@ export function ShoppingWorkspace() {
                   idPrefix="mobile"
                   values={filters}
                   busy={busy || locationBusy || offersBusy}
-                  hasSelectedProduct={Boolean(selectedProductId)}
+                  hasSelectedProduct={true}
                   onChange={handleFilterChange}
                   onUseCurrentLocation={handleUseCurrentLocation}
                   onApply={handleApplyFilters}
@@ -965,6 +1042,10 @@ function restoreMessages(value: unknown): ChatEntry[] {
       : undefined;
     return [{ ...entry, cards } as ChatEntry];
   });
+}
+
+function isConversationCard(card: AssistantCard): boolean {
+  return !["product_cards", "shop_cards", "compare", "alternatives"].includes(card.kind);
 }
 
 function restoreCard(value: unknown): AssistantCard[] {

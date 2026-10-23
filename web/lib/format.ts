@@ -12,8 +12,10 @@ export function formatPrice(value: number | null | undefined, unit = "تومان
     : "قیمت نامشخص";
 }
 
-export function formatDistance(value: number): string {
-  return `${persianNumber.format(value)} کیلومتر`;
+export function formatDistance(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${persianNumber.format(value)} کیلومتر`
+    : "فاصله نامشخص";
 }
 
 export function formatDate(value?: string | null): string {

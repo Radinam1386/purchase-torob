@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.core.config import project_path, settings
-from src.core.database import database_write_lock
+from src.core.database import database_write_lock, ensure_price_checks_schema
 from src.core.market_hubs import MARKET_HUBS
 from src.core.text import normalize_fa, parse_address, parse_json
 
@@ -140,6 +140,11 @@ def _preserve_user_data(connection: sqlite3.Connection, database_path: Path) -> 
             connection.execute(
                 f"INSERT OR REPLACE INTO inquiries({cols_str}) SELECT {cols_str} FROM previous_database.inquiries"
             )
+    if "price_checks" in tables:
+        ensure_price_checks_schema(connection)
+        previous_columns = {row[1] for row in connection.execute("PRAGMA previous_database.table_info(price_checks)")}
+        columns = ", ".join(row[1] for row in connection.execute("PRAGMA table_info(price_checks)") if row[1] in previous_columns)
+        connection.execute(f"INSERT INTO price_checks({columns}) SELECT {columns} FROM previous_database.price_checks")
 
 
 def _seed_market_hubs(connection: sqlite3.Connection) -> None:

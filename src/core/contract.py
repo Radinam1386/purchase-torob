@@ -90,7 +90,7 @@ class Offer(ContractModel):
 class ShopResult(ContractModel):
     shop: Shop
     offer: Offer
-    distance_km: float
+    distance_km: float | None
     open_now: KnownValue
     reasons: list[str]
 
@@ -280,6 +280,9 @@ class AssistantResponse(ContractModel):
     text: str
     cards: list[AssistantCard] = Field(default_factory=list)
     clarification_question: str | None = None
+    search_query: str | None = None
+    search_category: str | None = None
+    search_min_price: int | None = None
 
 
 class ConversationLocation(ContractModel):

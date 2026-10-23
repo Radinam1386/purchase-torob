@@ -1,0 +1,81 @@
+// Uses the running app and real local dataset. node app/products/browser.check.cjs
+const assert = require('node:assert/strict');
+const { chromium } = require('C:/Users/Lenovo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const base = process.env.APP_URL || 'http://localhost:3000';
+(async () => {
+  const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const checks = [];
+  const check = message => { checks.push(message); console.log(`PASS: ${message}`); };
+  page.setDefaultTimeout(45000);
+  try {
+    await page.goto(`${base}/products?q=${encodeURIComponent('هدفون')}`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-testid="product-results"]').waitFor({ timeout: 90000 });
+    const count = Number(await page.locator('[data-total]').getAttribute('data-total'));
+    const actualParams = new URL(page.url()).searchParams; actualParams.set('page_size','24');
+    const api = await (await page.request.get(`${base}/api/products?${actualParams}`)).json();
+    assert.equal(count, api.total); assert(count > 24);
+    assert.equal(await page.locator('[data-product-id]').count(), 24);
+    const first = await page.locator('[data-product-id]').first().getAttribute('data-product-id');
+    await page.getByRole('link', { name: 'صفحه بعد', exact: true }).click();
+    await page.waitForURL(/page=2/);
+    await page.waitForFunction(id => document.querySelector('[data-product-id]')?.getAttribute('data-product-id') !== id && Boolean(document.querySelector('[data-product-id]')), first);
+    assert.notEqual(await page.locator('[data-product-id]').first().getAttribute('data-product-id'), first);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('[data-testid="product-results"]').waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('page'), '2');
+    check('real API total, 24 results, page 2, independent refresh');
+    await page.getByLabel('حداکثر قیمت', { exact: true }).fill('۳ میلیون');
+    await page.getByLabel('مرتب‌سازی', { exact: true }).selectOption('price_asc');
+    await page.getByRole('button', { name: 'اعمال فیلترها', exact: true }).click();
+    await page.waitForURL(/max_price=3000000/);
+    await page.locator('[data-testid="product-results"]').waitFor();
+    const filteredParams = new URL(page.url()).searchParams; filteredParams.set('page_size','24');
+    const filtered = await (await page.request.get(`${base}/api/products?${filteredParams}`)).json();
+    await page.waitForFunction(total => document.querySelector('[data-total]')?.getAttribute('data-total') === String(total), filtered.total);
+    assert.equal(Number(await page.locator('[data-total]').getAttribute('data-total')), filtered.total);
+    assert(filtered.total < count);
+    assert(filtered.data.every(item => item.minPrice > 0 && item.minPrice <= 3000000));
+    assert(filtered.data.every((item, index, list) => !index || item.minPrice >= list[index - 1].minPrice));
+    const map = new URL(await page.getByRole('link', { name: 'مشاهده فروشگاه‌ها روی نقشه' }).getAttribute('href'), base);
+    assert.equal(map.searchParams.get('max_price'), '3000000');
+    check('real budget filtering, sorted prices, query and budget carried to map');
+    await page.locator('[data-product-id] input[type="checkbox"]').nth(0).check();
+    await page.locator('[data-product-id] input[type="checkbox"]').nth(1).check();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('[data-testid="product-results"]').waitFor();
+    assert.equal(await page.locator('[data-product-id] input:checked').count(), 2);
+    await page.getByRole('link', { name: 'مقایسه کالاها', exact: true }).click();
+    await page.locator('.compare-products-grid article').first().waitFor();
+    assert.equal(await page.locator('.compare-products-grid article').count(), 2);
+    await page.locator('.compare-products-grid article a').first().click();
+    await page.locator('.detail-head h1').waitFor({ timeout: 60000 });
+    assert.equal(await page.locator('.detail-offers h2').count(), 1);
+    assert((await page.getByRole('link', { name: 'مشاهده فروشگاه‌های این محصول روی نقشه' }).getAttribute('href')).includes('product_ids='));
+    check('comparison persists after refresh, comparison and real product detail offers render');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${base}/products?q=${encodeURIComponent('هدفون')}&max_price=3000000&sort=price_asc`, { waitUntil: 'domcontentloaded' });
+    await page.locator('[data-testid="product-results"]').waitFor();
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'mobile has horizontal overflow');
+    check('mobile results and filters fit 390px viewport');
+    await page.goto(`${base}/products?q=zznonexistentproductacceptance9832`, { waitUntil: 'domcontentloaded' });
+    await page.getByText('محصولی با این فیلترها پیدا نشد.', { exact: true }).waitFor();
+    assert.equal(Number(await page.locator('[data-total]').getAttribute('data-total')), 0);
+    let failing = true;
+    await page.route('**/api/products?**', async route => {
+      if (failing) await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'خطای آزمایشی اتصال' }) });
+      else await route.continue();
+    });
+    await page.goto(`${base}/products?q=${encodeURIComponent('هدفون')}`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('alert').filter({ hasText: 'خطای آزمایشی اتصال' }).waitFor();
+    failing = false;
+    await page.getByRole('button', { name: 'تلاش دوباره', exact: true }).click();
+    await page.locator('[data-testid="product-results"]').waitFor();
+    assert.equal(Number(await page.locator('[data-total]').getAttribute('data-total')), count);
+    check('zero-results state and failed request retry recover to real dataset results');
+    console.log(JSON.stringify({ passed: checks }, null, 2));
+  } finally {
+    // Cached Chrome can leave its close handshake pending on Windows.
+    await Promise.race([browser.close(), new Promise(resolve => setTimeout(resolve, 3000))]);
+  }
+})().then(() => process.exit(0), error => { console.error(error); process.exit(1); });

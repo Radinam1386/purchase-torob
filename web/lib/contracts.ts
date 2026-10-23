@@ -57,7 +57,7 @@ export interface Offer {
 export interface ShopResult {
   shop: Shop;
   offer: Offer;
-  distanceKm: number;
+  distanceKm: number | null;
   openNow: KnownValue<boolean>;
   reasons: string[];
   priceFreshness?: PriceFreshness | null;
@@ -83,6 +83,9 @@ export interface WebResult {
 
 export interface AssistantResponse {
   text: string;
+  searchQuery?: string | null;
+  searchCategory?: string | null;
+  searchMinPrice?: number | null;
   cards: AssistantCard[];
   clarificationQuestion?: string | null;
 }
@@ -244,6 +247,7 @@ export interface ChatTurn {
 export interface ChatEntry extends ChatTurn {
   id: string;
   cards?: AssistantCard[];
+  resultsUrl?: string;
 }
 
 export interface StreamEvent {

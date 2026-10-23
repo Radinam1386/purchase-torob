@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-import fcntl
+import os
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 import sqlite3
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -94,17 +98,42 @@ def ensure_inquiries_schema(connection: sqlite3.Connection) -> None:
 
 
 
+def ensure_price_checks_schema(connection: sqlite3.Connection) -> None:
+    """Keep real buyer reports independent of dataset offers and Mock results."""
+    connection.execute("""CREATE TABLE IF NOT EXISTS price_checks (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL, shop_id TEXT NOT NULL,
+        offer_id TEXT, outcome TEXT NOT NULL, reported_price INTEGER,
+        method TEXT NOT NULL, note TEXT, source TEXT NOT NULL DEFAULT 'buyer_report',
+        checked_at TEXT NOT NULL, observed_at TEXT, in_stock INTEGER, session_id TEXT)""")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(price_checks)")}
+    for name, definition in (("observed_at", "TEXT"), ("in_stock", "INTEGER"), ("session_id", "TEXT")):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE price_checks ADD COLUMN {name} {definition}")
+
+
 @contextmanager
 def database_write_lock(database_path: Path, *, exclusive: bool = False):
     """Coordinate app writes with the loader's atomic database replacement."""
     lock_path = database_path.with_name(f"{database_path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+    with lock_path.open("a+b") as lock_file:
+        if os.name == "nt":
+            # Windows byte-range locks need an existing byte and a stable offset.
+            if lock_file.seek(0, 2) == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

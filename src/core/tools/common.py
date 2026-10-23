@@ -81,14 +81,15 @@ def supports_tarob_pay_in_person(raw: str | None) -> bool | None:
 
 def shop_from_row(row) -> Shop:
     has_real_name = bool(row["has_real_name"])
+    coordinates = valid_coordinates(row["lat"], row["lng"])
     return Shop(
         id=row["shop_id"] if "shop_id" in row.keys() else row["id"],
         display_name=row["name"] if has_real_name else f"فروشگاه #{row['shop_id'] if 'shop_id' in row.keys() else row['id']}",
         has_real_name=has_real_name,
         instagram=row["instagram"] or None,
         website=row["website"] or None,
-        lat=float(row["lat"]) if row["lat"] is not None else None,
-        lng=float(row["lng"]) if row["lng"] is not None else None,
+        lat=coordinates[0] if coordinates else None,
+        lng=coordinates[1] if coordinates else None,
         address_text=row["address"] or None,
         mall=row["mall"] or None,
         floor=row["floor"] or None,
@@ -123,7 +124,19 @@ def haversine_km(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> floa
         * math.cos(math.radians(lat_b))
         * math.sin(lng_delta / 2) ** 2
     )
+    value = min(1, max(0, value))
     return 2 * radius_km * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def valid_coordinates(lat, lng) -> tuple[float, float] | None:
+    try:
+        latitude, longitude = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(latitude) and math.isfinite(longitude)
+            and -90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None
+    return latitude, longitude
 
 
 def is_open_now(raw_hours: str | None) -> bool | None:
@@ -208,7 +221,7 @@ def calculate_price_freshness(price_updated_at: str | None, now: datetime | None
 
 def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
     shop = shop_from_row(row)
-    distance = haversine_km(lat, lng, float(row["lat"]), float(row["lng"]))
+    distance = haversine_km(lat, lng, shop.lat, shop.lng) if shop.lat is not None and shop.lng is not None else None
     open_value = is_open_now(row["weekly_hours"])
     warranty_data = parse_json(row["warranty"])
     warranty = None
@@ -232,10 +245,10 @@ def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
     return ShopResult(
         shop=shop,
         offer=offer,
-        distance_km=round(distance, 2),
+        distance_km=distance,
         open_now=KnownValue(value=open_value, source="dataset", known=open_value is not None),
         reasons=[
             "برای این محصول آفر در دیتاست ترب ثبت شده",
-            f"فاصله‌ی مستقیم {distance:.1f} کیلومتر",
+            f"فاصله‌ی مستقیم {distance:.1f} کیلومتر" if distance is not None else "مختصات معتبر موجود نیست؛ محدوده قابل تأیید نیست",
         ],
     )
