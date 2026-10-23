@@ -8,4 +8,8 @@ The regression fixture adds 2,000 unrelated offers and reproduces the older mate
 
 Validation before deployment: all 62 backend tests passed. No dependency, schema, pricing, infrastructure plan or live data migration was needed. Deployment uses the existing persistent disk; startup does not replace an existing catalog or its histories.
 
-Live post-deployment results are recorded in `output/liara/search-repair-check.json` and the browser evidence alongside it. This file does not assert a successful deployment before those checks finish.
+Release `6adbaf5dbffb36d784151ae2` passed live verification after traffic finished switching to the new container. Build state `READY` alone preceded that switch; the first HTTP attempt still reached the retiring release and timed out. Runtime release identities and a read-only console check confirmed the new code and SQLite 3.40.1 before acceptance was repeated.
+
+The production query plans use `offers_product_idx`; count, rows and facets took 0.085, 0.069 and 0.098 seconds respectively inside the container. Public API checks returned 735 headphone products in 642 ms, page two in 392 ms and ascending price order in 384 ms. The map returned the same 735 products from 160 shops. S24 search returned five products in 6.081 seconds. A remote zero-radius center returned zero headphone products. Desktop, refresh and mobile browser checks passed, exit code zero; the mobile screenshot was visually reviewed.
+
+Live results are recorded in `output/liara/search-repair-check.json`, browser evidence alongside it and `remote-query-plan.txt`. No broad concurrent-load test was performed; S24 search remains slower than the headphone query.
