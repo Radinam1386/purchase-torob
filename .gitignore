@@ -14,6 +14,7 @@ data/*.sqlite-wal
 data/*.staging.sqlite*
 evals/results*.json
 logs/
+output/
 env/
 evals/
 !evals/

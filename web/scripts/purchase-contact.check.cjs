@@ -1,7 +1,7 @@
 // Real app/dataset acceptance. APP_URL defaults to the isolated local integration server.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'C:/Users/Lenovo/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
-const base=process.env.APP_URL||'http://127.0.0.1:3001',output=path.resolve(__dirname,'../../output/contact-acceptance');
+const base=process.env.APP_URL||'http://127.0.0.1:3001',output=process.env.ACCEPTANCE_OUTPUT||path.resolve(__dirname,'../../output/contact-acceptance');
 const checks=[],errors=[],externalDuringMock=[];
 const pass=(name,values={})=>{checks.push({name,...values});console.log('PASS',name,JSON.stringify(values));};
 (async()=>{
@@ -11,9 +11,10 @@ const pass=(name,values={})=>{checks.push({name,...values});console.log('PASS',n
  page.setDefaultTimeout(45000);page.setDefaultNavigationTimeout(60000);
  let watchMock=false;
  page.on('pageerror',error=>errors.push(error.message));
- page.on('request',request=>{if(watchMock&&!['http://127.0.0.1:3001','http://127.0.0.1:3000','http://localhost:3000'].includes(new URL(request.url()).origin))externalDuringMock.push(request.url());});
+ page.on('request',request=>{if(watchMock&&new URL(request.url()).origin!==new URL(base).origin)externalDuringMock.push(request.url());});
  try{
   await page.goto(base+'/chat',{waitUntil:'domcontentloaded'});
+  await page.locator('.service-status.status-ready').waitFor();
   const composer=page.getByRole('textbox',{name:'جستجوی کالا یا پیام به راهنمای خرید'});
   async function say(text){await composer.fill(text);await page.getByRole('button',{name:'شروع جستجو',exact:true}).click();await page.waitForFunction(()=>location.pathname!='/chat'||!document.querySelector('textarea')?.disabled,undefined,{timeout:100000});}
   await say('هدفون می‌خوام');assert.equal(new URL(page.url()).pathname,'/chat');

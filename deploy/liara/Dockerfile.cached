@@ -1,0 +1,16 @@
+FROM node:24-bookworm-slim AS node
+FROM python:3.12-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 && rm -rf /var/lib/apt/lists/*
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY web-artifact ./web
+COPY src ./src
+COPY prompts ./prompts
+COPY seed/catalog.sqlite.gz ./seed/catalog.sqlite.gz
+COPY deploy/liara/start.py ./deploy/liara/start.py
+RUN useradd --create-home --uid 10001 app && mkdir -p /app/data /app/logs && chown -R app:app /app
+EXPOSE 3000
+CMD ["python", "deploy/liara/start.py"]
