@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /app/data/torob.sqlite
+      TOOL_LOG_PATH: /app/logs/tool-calls.jsonl
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"
+    group_add:
+      - "10001"
+    volumes:
+      - ./data:/app/data
+      - tool_logs:/app/logs
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_AGENT_API: ${NEXT_PUBLIC_AGENT_API:-}
+        AGENT_API_INTERNAL: http://api:8000
+    environment:
+      AGENT_API_INTERNAL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  tool_logs:

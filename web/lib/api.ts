@@ -1,6 +1,6 @@
-import type { ChatTurn, ConversationState, StreamEvent } from "./contracts";
+import type { ChatTurn, ConversationState, ShopResult, StreamEvent } from "./contracts";
 
-const API_ROOT = (process.env.NEXT_PUBLIC_AGENT_API ?? "http://localhost:8000").replace(/\/$/, "");
+const API_ROOT = (process.env.NEXT_PUBLIC_AGENT_API ?? "").replace(/\/$/, "");
 
 interface ChatRequest {
   message: string;
@@ -76,4 +76,36 @@ export async function getApiHealth(signal?: AbortSignal) {
     databaseReady: boolean;
     llmConfigured: boolean;
   };
+}
+
+export async function searchOffers(input: {
+  productId: string;
+  location: { lat: number; lng: number };
+  radius: number;
+  maxPrice: number | null;
+  installment: boolean;
+  openNow: boolean;
+}, signal?: AbortSignal): Promise<ShopResult[]> {
+  const response = await fetch(`${API_ROOT}/api/offers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      productId: input.productId,
+      lat: input.location.lat,
+      lng: input.location.lng,
+      radius: input.radius,
+      maxPrice: input.maxPrice,
+      installment: input.installment,
+      openNow: input.openNow,
+    }),
+    signal,
+  });
+  const body = await response.json().catch(() => null) as
+    | { source: string; data: ShopResult[] }
+    | { detail?: string }
+    | null;
+  if (!response.ok || !body || !("data" in body)) {
+    throw new Error(body && "detail" in body ? body.detail ?? "جستجو انجام نشد." : "جستجو انجام نشد.");
+  }
+  return body.data;
 }

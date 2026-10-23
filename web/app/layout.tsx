@@ -2,6 +2,7 @@ import "@fontsource/vazirmatn/400.css";
 import "@fontsource/vazirmatn/500.css";
 import "@fontsource/vazirmatn/600.css";
 import "@fontsource/vazirmatn/700.css";
+import "leaflet/dist/leaflet.css";
 import "./globals.css";
 
 import type { Metadata, Viewport } from "next";

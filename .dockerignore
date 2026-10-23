@@ -1,0 +1,15 @@
+.env
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.git
+.next
+node_modules
+web/.next
+web/node_modules
+data
+torob-dataset
+evals/results*.json
+logs

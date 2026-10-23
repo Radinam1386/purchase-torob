@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.core.agent import ChatTurn, ShoppingAgent, create_agent
 from src.core.config import settings
-from src.core.contract import ConversationState
+from src.core.contract import ConversationState, ShopResult
 from src.core.tools.registry import TOOLS_BY_NAME
 
 logger = logging.getLogger("purchase_torob.api")
@@ -50,6 +50,23 @@ class ChatRequest(BaseModel):
 
 class LocationRequest(BaseModel):
     text: str = Field(min_length=2, max_length=160)
+
+
+class OffersRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(alias="productId", min_length=1, max_length=120)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    radius: float = Field(default=4, ge=0, le=100)
+    max_price: int | None = Field(default=None, alias="maxPrice", ge=0)
+    installment: bool = False
+    open_now: bool = Field(default=False, alias="openNow")
+
+
+class OffersResponse(BaseModel):
+    source: Literal["dataset"]
+    data: list[ShopResult]
 
 
 @lru_cache(maxsize=1)
@@ -118,6 +135,25 @@ async def resolve_location(request: LocationRequest) -> dict:
     if not data:
         raise HTTPException(status_code=404, detail="این محدوده پیدا نشد؛ نام محله را دقیق‌تر بنویس.")
     return data
+
+
+@app.post("/api/offers", response_model=OffersResponse)
+async def search_offers(request: OffersRequest) -> OffersResponse:
+    """Apply the selected filters directly, without another model round trip."""
+    try:
+        result = await TOOLS_BY_NAME["get_offers"].ainvoke({
+            "product_id": request.product_id,
+            "lat": request.lat,
+            "lng": request.lng,
+            "radius": request.radius,
+            "max_price": request.max_price,
+            "installment": request.installment,
+            "open_now": request.open_now,
+        })
+        return OffersResponse.model_validate(result)
+    except Exception as error:
+        logger.exception("Could not search offers for product %s", request.product_id)
+        raise HTTPException(status_code=500, detail="جستجوی فروشگاه‌ها انجام نشد.") from error
 
 
 def _sse(payload: dict) -> str:

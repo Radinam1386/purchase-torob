@@ -137,7 +137,7 @@ interface Inquiry {                         // شبیه‌سازی
 3. نگاشت آدرس قبلی: ۳٬۷۴۰ پاساژ، ۴٬۲۰۹ طبقه و ۲٬۳۷۵ واحد شناسایی شدند. فقط `payment_options.channel=in_person` پرداخت/قسط حضوری تلقی می‌شود.
 4. کد هسته به Python بازنویسی شده: قرارداد Pydantic در `src/core/contract.py`، LangGraph و مدل LangChain در `src/core/agent.py`، و ابزارهای مجزا در `src/core/tools/`.
 5. ابزارهای بخش ۹ و تکمیلی‌ها: `web_search`، `resolve_location`، `save_user_preference` و `load_user_preferences`. جدول دانش مراکز بورس در `src/core/market_hubs.py` تعریف می‌شود و ۲۰ ردیف دارد.
-6. راهنمای فارسی در `prompts/system.fa.md`، CLI در `src/cli/chat.py` و ارزیابی واقعی در `src/scripts/evals.py` است. فرمان‌ها با `python -m ...` اجرا می‌شوند؛ npm و فایل‌های TypeScript حذف شده‌اند.
+6. راهنمای فارسی در `prompts/system.fa.md`، CLI در `src/cli/chat.py` و ارزیابی واقعی در `src/scripts/evals.py` است. فرمان‌های Python با `python -m ...` اجرا می‌شوند؛ رابط React/Next.js در `web/` است.
 7. مدل در `/models` پیدا شد؛ پاسخ ساده و tool call واقعی موفق بودند. پارامتر سازگار endpoint برابر `max_completion_tokens` است. adapter بر پایه‌ی `langchain-core` و OpenAI SDK نوشته شده؛ تلاش نصب `langchain-openai` به‌خاطر خطای DNS mirror ممکن نبود.
 8. محدودیت‌های ثبت‌شده: کلید Serper قبلاً HTTP 403 داده و ۷ از ۲۰ مختصات مراکز بورس تأییدنشده‌اند. دیپلوی هنوز انجام نشده است.
 9. بازنویسی Python بررسی شد: smoke test ابزارهای محلی ۱۱/۱۱ پاس، ارزیابی با LLM واقعی ۱۵/۱۵ پاس، و تست fixture مستقل برای loader/SQLite/FTS5 موفق.
@@ -145,3 +145,5 @@ interface Inquiry {                         // شبیه‌سازی
 11. هشدار محیط: اجرای فعلی Python 3.14 است و `langchain-core` هشدار سازگاری پشتیبانی داخلی Pydantic v1 را می‌دهد؛ مسیرهای استفاده‌شده و همه‌ی evalها اجرا شدند. برای محیط پایدار، Python 3.11 تا 3.13 ترجیح دارد.
 12. `langchain-openai` در محیط فعلی به‌علت خطای DNS قابل نصب نبود؛ برای حفظ اجرای واقعی از adapter مبتنی بر `langchain-core` و OpenAI SDK استفاده شده و گراف orchestration همچنان LangGraph است.
 13. رابط React/Next.js در `web/` اضافه شد؛ فیلترهای بودجه، محدوده، ساعت کاری و پرداخت حضوری کنار چت قرار دارند و کارت‌های پاسخ را با برچسب منبع نمایش می‌دهند. `src/api.py` پل FastAPI با استریم رویدادهای گراف است. برای اجرا، API را با `uvicorn src.api:app --reload --port 8000` و رابط را از `web/` با `npm run dev` بالا بیاورید. قواعد شفافیت بخش ۵ تغییر نکرده‌اند.
+14. بعد از انتخاب مدل، endpoint `POST /api/offers` ابزار `get_offers` را مستقیم اجرا می‌کند؛ فیلترها بدون tool-call تازه‌ی LLM اعمال می‌شوند و آفرها روی Leaflet/OpenStreetMap همراه مسیر و فهرست فروشگاه‌ها نمایش داده می‌شوند. اگر نتیجه‌ای نماند، UI افزایش شعاع، برداشتن فیلترها و درخواست پیشنهاد بورس کالا را فراهم می‌کند.
+15. `Dockerfile.api`، `web/Dockerfile` و `docker-compose.yml` برای اجرای دو سرویس اضافه شدند. راهنمای فلو پنج‌دقیقه‌ای در `docs/demo-runbook.fa.md` است. انتشار نهایی روی زیرساخت اسپانسر و ضبط/تحویل ویدئو هنوز انجام نشده؛ برای آن دامنه، دسترسی و روش استقرار اسپانسر لازم است. اصول شفافیت بخش ۵ دست‌نخورده‌اند.

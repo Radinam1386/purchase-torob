@@ -13,8 +13,9 @@ data/*.sqlite-wal
 data/*.staging.sqlite*
 evals/results*.json
 logs/
-env
+env/
 evals/
 !evals/
 evals/*
 !evals/scenarios.json
+torob-dataset/
