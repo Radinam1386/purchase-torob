@@ -103,11 +103,13 @@ class ShoppingAgent:
         latest = user_turns[-1] if user_turns else ""
         conversation = state.get("conversation", {})
         conversation = dict(conversation)
+        previous_budget = conversation.get("budget")
         parsed_state = ConversationState.model_validate(conversation)
         _apply_constraints(parsed_state, latest)
         conversation["budget"] = parsed_state.budget
         preferences = dict(conversation.get("preferences") or {})
         advisor = dict(preferences.get("_advisor", {}))
+        was_ready_to_search = advisor.get("status") == "ready_to_search"
         selected = bool(conversation.get("selectedProductId") or conversation.get("selected_product_id"))
         previous_category = advisor.get("category")
         latest_text = normalize_fa(latest)
@@ -231,9 +233,18 @@ class ShoppingAgent:
             requirements["status"] = "ready_to_search"
             budget = conversation.get("budget")
             budget_label = f"{budget:,} تومان" if budget is not None else "بودجه‌ای که گفتی"
-            question = f"خلاصه ترجیحات: {category} برای {use}، سقف {budget_label}. جست‌وجو کنم؟ می‌تونی همین‌جا ترجیحات رو اصلاح کنی."
+            preference_summary = f"{category} برای {use}، سقف {budget_label}"
             if important:
-                question = question.replace(". جست‌وجو", "؛ " + "، ".join(important.values()) + ". جست‌وجو", 1)
+                preference_summary += "، " + "، ".join(important.values())
+            if was_ready_to_search:
+                if budget is not None and budget != previous_budget:
+                    question = f"بودجه رو به {budget_label} تغییر دادم. با همین شرایط جست‌وجو رو شروع کنم؟"
+                elif extracted:
+                    question = f"ترجیح «{'، '.join(extracted.values())}» ثبت شد. جست‌وجو رو شروع کنم؟"
+                else:
+                    question = f"ترجیحات به‌روز شد: {preference_summary}. جست‌وجو رو شروع کنم؟"
+            else:
+                question = f"خلاصه ترجیحات: {preference_summary}. جست‌وجو کنم؟ می‌تونی همین‌جا ترجیحات رو اصلاح کنی."
             _sync_search_profile(conversation)
             return {"conversation": conversation, "clarification_question": question}
         requirements["status"] = "clarifying_requirements"
@@ -568,7 +579,11 @@ def _needs_clarification(text: str, conversation: dict[str, Any]) -> bool:
 
 def _explicit_search_now(text: str) -> bool:
     normalized = normalize_fa(text)
-    return bool(re.search(r"همین الان|الان نشون بده|محصولات رو نشون|خودت بهترین|جستجو کن|جست وجو کن|پیدا کن|خودت انتخاب کن|فرقی نداره|مهم نیست|بدون بودجه|هر قیمتی", normalized))
+    return bool(re.search(
+        r"همین الان|الان نشون بده|محصولات رو نشون|خودت بهترین|جست\s*(?:و\s*)?جو کن|"
+        r"پیدا کن|خودت انتخاب کن|فرقی نداره|مهم نیست|بدون بودجه|هر قیمتی",
+        normalized,
+    ))
 
 
 def _clarification_for(text: str) -> str:
