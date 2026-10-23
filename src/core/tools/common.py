@@ -1,0 +1,182 @@
+"""Conversions from SQLite rows to shared public data contracts."""
+
+from __future__ import annotations
+
+import math
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel
+
+from src.core.config import settings
+from src.core.contract import KnownValue, MarketHub, Offer, Product, Shop, ShopResult, Warranty
+from src.core.text import normalize_fa, parse_json
+
+
+def tool_result(source: str, data, **metadata) -> dict:
+    """Return JSON-safe data while keeping a uniform tool envelope."""
+    return {"source": source, "data": _json_safe(data), **metadata}
+
+
+def _json_safe(value):
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", by_alias=True)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def product_from_row(row) -> Product:
+    specs_rows = parse_json(row["specs"], default=[])
+    specs = {
+        str(item["key"]): str(item["value"])
+        for item in specs_rows
+        if isinstance(item, dict) and item.get("key") and item.get("value")
+    }
+    images = parse_json(row["images"], default=[])
+    if not isinstance(images, list):
+        images = []
+
+    model = row["model"]
+    return Product(
+        id=row["id"],
+        title_fa=row["title"],
+        title_en=model if model and model != "null" else None,
+        brand=row["brand"] or None,
+        category=row["category"] or None,
+        specs=specs,
+        images=images,
+    )
+
+
+def payment_options(raw: str | None) -> list[dict]:
+    value = parse_json(raw, default=[])
+    return value if isinstance(value, list) else []
+
+
+def supports_in_person_installments(raw: str | None) -> bool:
+    """Only explicit in-person payment records count as in-person installments."""
+    return any(option.get("channel") == "in_person" for option in payment_options(raw))
+
+
+def supports_tarob_pay_in_person(raw: str | None) -> bool:
+    return any(
+        option.get("channel") == "in_person"
+        and "ترب پی" in normalize_fa(option.get("provider_name", ""))
+        for option in payment_options(raw)
+    )
+
+
+def shop_from_row(row) -> Shop:
+    has_real_name = bool(row["has_real_name"])
+    return Shop(
+        id=row["shop_id"] if "shop_id" in row.keys() else row["id"],
+        display_name=row["name"] if has_real_name else f"فروشگاه #{row['shop_id'] if 'shop_id' in row.keys() else row['id']}",
+        has_real_name=has_real_name,
+        instagram=row["instagram"] or None,
+        website=row["website"] or None,
+        lat=float(row["lat"]) if row["lat"] is not None else None,
+        lng=float(row["lng"]) if row["lng"] is not None else None,
+        address_text=row["address"] or None,
+        mall=row["mall"] or None,
+        floor=row["floor"] or None,
+        unit=row["unit"] or None,
+        hours=parse_json(row["weekly_hours"], default={}) or {},
+        tarob_pay_in_store=supports_tarob_pay_in_person(row["payment_options"]),
+        installment=supports_in_person_installments(row["payment_options"]),
+        express_delivery=(bool(row["fast_delivery"]) if row["fast_delivery"] is not None else None),
+    )
+
+
+def market_hub_from_row(row) -> MarketHub:
+    return MarketHub(
+        category=row["category"],
+        name=row["name"],
+        neighborhood=row["neighborhood"],
+        lat=float(row["lat"]),
+        lng=float(row["lng"]),
+        note=row["note"],
+        coordinate_source=row["coordinate_source"],
+        coordinate_verified=bool(row["coordinate_verified"]),
+    )
+
+
+def haversine_km(lat_a: float, lng_a: float, lat_b: float, lng_b: float) -> float:
+    radius_km = 6371.0
+    lat_delta = math.radians(lat_b - lat_a)
+    lng_delta = math.radians(lng_b - lng_a)
+    value = (
+        math.sin(lat_delta / 2) ** 2
+        + math.cos(math.radians(lat_a))
+        * math.cos(math.radians(lat_b))
+        * math.sin(lng_delta / 2) ** 2
+    )
+    return 2 * radius_km * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def is_open_now(raw_hours: str | None) -> bool | None:
+    hours = parse_json(raw_hours)
+    if not isinstance(hours, dict):
+        return None
+
+    now = datetime.now(ZoneInfo(settings.timezone))
+    weekday = now.strftime("%a").lower()
+    day = hours.get(weekday)
+    if not isinstance(day, dict):
+        return None
+    if day.get("status") == "closed":
+        return False
+    if day.get("status") != "declared":
+        return None
+
+    minute_now = now.hour * 60 + now.minute
+    for shift in day.get("shifts", []):
+        if not isinstance(shift, dict):
+            continue
+        start = _minutes(shift.get("start_time"))
+        end = _minutes(shift.get("end_time"))
+        if start is not None and end is not None and start <= minute_now < end:
+            return True
+    return False
+
+
+def _minutes(value: str | None) -> int | None:
+    try:
+        hour, minute = value.split(":", maxsplit=1)
+        return int(hour) * 60 + int(minute[:2])
+    except (AttributeError, ValueError):
+        return None
+
+
+def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
+    shop = shop_from_row(row)
+    distance = haversine_km(lat, lng, float(row["lat"]), float(row["lng"]))
+    open_value = is_open_now(row["weekly_hours"])
+    warranty_data = parse_json(row["warranty"])
+    warranty = None
+    if isinstance(warranty_data, dict):
+        warranty = Warranty(
+            provider=warranty_data.get("provider") or None,
+            months=warranty_data.get("period_months") or None,
+        )
+
+    offer = Offer(
+        shop_id=row["offer_shop_id"],
+        product_id=row["product_id"],
+        price=int(row["price"]),
+        price_updated_at=row["price_updated_at"],
+        warranty=warranty,
+        stock="unverified",
+    )
+    return ShopResult(
+        shop=shop,
+        offer=offer,
+        distance_km=round(distance, 2),
+        open_now=KnownValue(value=open_value, source="dataset", known=open_value is not None),
+        reasons=[
+            "برای این محصول آفر در دیتاست ترب ثبت شده",
+            f"فاصله‌ی مستقیم {distance:.1f} کیلومتر",
+        ],
+    )

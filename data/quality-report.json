@@ -1,0 +1,44 @@
+{
+  "generatedAt": "2026-10-22T21:21:42.840Z",
+  "database": "/Users/radin/Desktop/purchase-torob/data/torob.sqlite",
+  "rows": {
+    "products": 225903,
+    "shops": 6476,
+    "offers": 331506
+  },
+  "quality": {
+    "expectedRealNames": 112,
+    "detectedRealNames": 112,
+    "missingCoordinates": 0,
+    "missingOrInvalidPrices": 15083,
+    "missingPriceUpdateTimes": 769,
+    "orphanOffers": 0,
+    "invalidSpecsJson": 0,
+    "latestPriceUpdateAt": "2026-10-13T00:02:35.297834+00:00",
+    "latestPriceAgeDays": 9,
+    "parsedAddresses": {
+      "shops": 6476,
+      "malls": 3740,
+      "floors": 4209,
+      "units": 2375
+    },
+    "paymentOptions": {
+      "shopsWithInPersonOption": 82,
+      "shopsWithTarobPayInPerson": 50,
+      "mapping": "فقط channel=in_person به عنوان پرداخت حضوری/قسطی لحاظ شد."
+    },
+    "marketHubs": {
+      "count": 20,
+      "coordinateVerified": 13,
+      "coordinateUnverified": 7
+    },
+    "priceFreshnessNote": "قیمت‌ها و زمان تغییر همان داده‌ی ثبت‌شده‌اند؛ موجودی همه‌ی آفرها تأییدنشده است.",
+    "nullDeliveryFlags": {
+      "n": 4875
+    }
+  },
+  "interpretation": {
+    "installment": "فقط payment_options با channel=in_person به عنوان امکان پرداخت حضوری/قسطی علامت می‌خورد؛ سایر کانال‌ها مدرک قسط حضوری نیستند.",
+    "shopName": "فقط فروشگاه دارای وب‌سایت یا اینستاگرام نام واقعی تلقی می‌شود، طبق PROJECT.md."
+  }
+}
