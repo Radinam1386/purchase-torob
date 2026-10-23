@@ -167,6 +167,7 @@ a { color: inherit; text-decoration: none; }
 .shop-price-row { display: flex; align-items: baseline; gap: 11px; margin: 12px 0 5px 34px; }
 .shop-price-row strong { color: #2a3935; font-size: 15px; font-weight: 700; direction: rtl; }
 .shop-price-row span { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); font-size: 10px; }
+.offer-id { color: #87918d; font-size: 9px; direction: ltr; }
 .shop-reason { margin: 0 34px 9px 0; color: #5e6a63; font-size: 10px; line-height: 1.8; }
 .offer-facts { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-inline-start: 34px; color: #7e8784; font-size: 9px; }
 .offer-facts > span { display: inline-flex; align-items: center; gap: 4px; }
@@ -304,6 +305,7 @@ a { color: inherit; text-decoration: none; }
 .nearby-shop-mark { width: 30px; height: 30px; display: grid; place-items: center; flex: none; border-radius: 9px; color: #77877c; background: #f2f4f0; }
 .nearby-shop-main { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 3px; }
 .nearby-shop-main strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.nearby-payment { color: #7e8784; font-size: 8px; }
 .nearby-address { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .nearby-meta { display: flex; align-items: center; gap: 4px; color: #737d77; font-size: 8px; }
 .nearby-meta svg { color: var(--green); }
@@ -318,6 +320,7 @@ a { color: inherit; text-decoration: none; }
 .nearby-shop-price a { display: flex; align-items: center; gap: 3px; margin-top: 2px; color: var(--green); font-size: 8px; }
 .map-popup { display: flex; flex-direction: column; gap: 4px; min-width: 145px; font: 11px "Vazirmatn", Tahoma, sans-serif; }
 .map-popup small { color: var(--amber); }
+.map-popup-offer { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; border-top: 1px solid #ecece7; }
 .map-popup a { color: var(--green); }
 .offers-loading { display: flex; align-items: center; gap: 8px; padding: 22px 15px; color: var(--ink-soft); font-size: 10px; }
 .offers-error { display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 20px 14px; color: var(--ink-soft); text-align: center; font-size: 9px; }

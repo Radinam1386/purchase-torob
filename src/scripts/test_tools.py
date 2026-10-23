@@ -46,8 +46,8 @@ async def run_smoke_checks() -> list[tuple[str, str]]:
         ("get_shop_location_hint", {"shop_id": seed["shop_id"]}),
         ("suggest_market_hub", {"category_or_product": "چاپگر صنعتی چاپ روی پارچه"}),
         ("product_quick_look", {"product_id": seed["product_id"]}),
-        ("save_user_preference", {"user_id": "tool-smoke", "key": "mode", "value": "in_person"}),
-        ("load_user_preferences", {"user_id": "tool-smoke"}),
+        ("save_user_preference", {"key": "mode", "value": "in_person"}),
+        ("load_user_preferences", {}),
     ]
     results: list[tuple[str, str]] = []
     for name, arguments in cases:

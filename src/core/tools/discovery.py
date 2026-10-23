@@ -57,12 +57,13 @@ def product_quick_look(product_id: str) -> dict:
         raise ValueError("محصول پیدا نشد")
 
     raw_specs = parse_json(product["specs"], default=[])
-    specs = [
-        (str(item["key"]).strip(), str(item["value"]).strip())
-        for item in raw_specs
-        if isinstance(item, dict) and item.get("key") and item.get("value")
-    ] if isinstance(raw_specs, list) else []
-    strengths = [f"{key}: {value}" for key, value in specs[:3]]
+    specs = _product_specifications(raw_specs)
+    priority_specs = [
+        spec for spec in specs
+        if any(term in normalize_fa(spec[0]) for term in ("رنگ", "وزن"))
+    ]
+    other_specs = [spec for spec in specs if spec not in priority_specs]
+    strengths = [f"{key}: {value}" for key, value in (priority_specs + other_specs)[:8]]
     if not strengths:
         strengths = ["مشخصات فنی قابل استفاده‌ای برای این مدل ثبت نشده است."]
 
@@ -75,12 +76,30 @@ def product_quick_look(product_id: str) -> dict:
         "strengths": strengths,
         "weaknesses": [
             "دیتاست نظر کاربران و آزمون مستقل ندارد؛ تناسب کالا را فقط با مشخصات ثبت‌شده بسنج.",
-            *([f"این مشخصات در دیتاست ثبت نشده: {', '.join(key for key, _ in specs[3:6])}."] if len(specs) > 3 else []),
         ],
         "in_person_checks": checks,
         "source": "ai_knowledge",
     }
     return tool_result("ai_knowledge", card)
+
+
+def _product_specifications(raw_specs) -> list[tuple[str, str]]:
+    if isinstance(raw_specs, dict):
+        return [
+            (str(key).strip(), str(value).strip())
+            for key, value in raw_specs.items()
+            if key and value is not None and str(value).strip()
+        ]
+    if not isinstance(raw_specs, list):
+        return []
+    return [
+        (str(item["key"]).strip(), str(item["value"]).strip())
+        for item in raw_specs
+        if isinstance(item, dict)
+        and item.get("key")
+        and item.get("value") is not None
+        and str(item["value"]).strip()
+    ]
 
 
 def _in_person_checks(category: str) -> list[str]:

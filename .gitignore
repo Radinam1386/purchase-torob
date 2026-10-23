@@ -8,6 +8,7 @@ build/
 dist/
 .pytest_cache/
 data/*.sqlite
+data/*.lock
 data/*.sqlite-shm
 data/*.sqlite-wal
 data/*.staging.sqlite*

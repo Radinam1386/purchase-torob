@@ -142,8 +142,7 @@ def card_data_for_tool(name: str, data: Any, source: str) -> dict[str, Any] | No
     if name == "find_alternatives":
         return {
             "kind": "alternatives",
-            "products": _limit(data.get("products", [])),
-            "results": _advisory_results(data.get("results", [])),
+            "options": _alternative_options(data),
             "source": source,
         }
     if name == "suggest_market_hub":
@@ -191,14 +190,49 @@ def _advisory_results(items: Any) -> list[dict[str, Any]]:
         open_now = result.get("openNow", {}).get("value")
         if open_now is False:
             reason = "فروشگاه الان بسته است؛ پیش از مراجعه ساعت کاری را دوباره بررسی کن."
-        elif price == lowest_price and distance == shortest_distance:
+        elif price is not None and price == lowest_price and distance == shortest_distance:
             reason = "هم کم‌قیمت‌ترین گزینه‌ی ثبت‌شده است و هم نزدیک‌ترین گزینه‌ی این فهرست."
-        elif price == lowest_price:
+        elif price is not None and price == lowest_price:
             reason = f"کمترین قیمت ثبت‌شده را دارد؛ فاصله‌ی مستقیمش {distance} کیلومتر است."
         elif distance == shortest_distance:
-            reason = f"نزدیک‌ترین گزینه است؛ قیمت ثبت‌شده‌اش {price} تومان است."
+            reason = (
+                f"نزدیک‌ترین گزینه است؛ قیمت ثبت‌شده‌اش {price} تومان است."
+                if price is not None else "نزدیک‌ترین گزینه است؛ قیمت ثبت نشده."
+            )
+        elif price is None:
+            reason = f"آفر ثبت‌شده دارد؛ قیمت مشخص نیست و {distance} کیلومتر فاصله دارد."
         else:
             reason = f"آفر ثبت‌شده دارد و {distance} کیلومتر با لوکیشن شما فاصله دارد."
         result["reasons"] = [reason]
         summarized.append(result)
     return summarized
+
+
+def _alternative_options(data: Any) -> list[dict[str, Any]]:
+    if not isinstance(data, dict):
+        return []
+    products = {
+        product.get("id"): product
+        for product in data.get("products", [])
+        if isinstance(product, dict) and product.get("id")
+    }
+    offers_by_product: dict[str, list[dict[str, Any]]] = {}
+    for result in data.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        product_id = result.get("offer", {}).get("productId")
+        if product_id:
+            offers_by_product.setdefault(product_id, []).append(result)
+
+    options = []
+    for product_id, results in offers_by_product.items():
+        product = products.get(product_id)
+        if product is None:
+            continue
+        options.append({
+            "product": product,
+            "results": _advisory_results(results[:3]),
+        })
+        if len(options) == 3:
+            break
+    return options

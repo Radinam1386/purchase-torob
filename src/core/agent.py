@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator, Callable
@@ -23,6 +24,7 @@ from src.core.response import parse_tool_payload, response_from_messages
 from src.core.tool_logging import ToolCallLogger
 from src.core.text import normalize_fa
 from src.core.tools.registry import TOOLS
+from src.core.user_context import reset_current_user_id, set_current_user_id
 
 logger = logging.getLogger("purchase_torob.agent")
 
@@ -113,6 +115,14 @@ class ShoppingAgent:
         }
 
     async def _call_model(self, state: AgentState) -> dict[str, Any]:
+        conversation = state.get("conversation", {})
+        for message in reversed(state.get("messages", [])):
+            if isinstance(message, ToolMessage) and message.name == "resolve_location":
+                resolved = (parse_tool_payload(message.content) or {}).get("data")
+                if isinstance(resolved, dict) and "lat" in resolved and "lng" in resolved:
+                    conversation["location"] = resolved
+                break
+        state["conversation"] = conversation
         response = await self._model_with_tools.ainvoke(
             [SystemMessage(content=self._make_prompt(state)), *state.get("messages", [])]
         )
@@ -137,8 +147,7 @@ class ShoppingAgent:
         serialized_state = json.dumps(conversation, ensure_ascii=False)
         return (
             f"{self._system_prompt}\n\n"
-            f"وضعیت جاری گفتگو (JSON): {serialized_state}\n"
-            f"شناسه کاربر: {user_id}"
+            f"وضعیت جاری گفتگو (JSON): {serialized_state}"
         )
 
     @staticmethod
@@ -179,6 +188,7 @@ class ShoppingAgent:
         tool_started_at: dict[str, float] = {}
         tool_logger = ToolCallLogger()
         started_at = time.monotonic()
+        user_context_token = set_current_user_id(user_id)
 
         try:
             async with asyncio.timeout(settings.timeout_seconds):
@@ -198,6 +208,8 @@ class ShoppingAgent:
                             yield _emit(event, on_event)
         except TimeoutError as error:
             raise TimeoutError("زمان مجاز پاسخ‌گویی ایجنت تمام شد.") from error
+        finally:
+            reset_current_user_id(user_context_token)
 
         if final_state is None:
             raise RuntimeError("گراف ایجنت بدون خروجی پایان یافت.")
@@ -262,14 +274,19 @@ _BUYING_CONTEXT = re.compile(
 
 
 def _needs_clarification(text: str, conversation: dict[str, Any]) -> bool:
-    if conversation.get("selected_product_id") or re.search(r"product_[\w-]+", text):
+    if (
+        conversation.get("selected_product_id")
+        or conversation.get("selectedProductId")
+        or re.search(r"product_[\w-]+", text)
+        or _has_specific_model(text)
+    ):
         return False
     if _BUYING_CONTEXT.search(text):
         return False
     # A prior turn can already contain a use case, budget, or selected model.
     prior_context = " ".join(
         str(value) for key, value in conversation.items()
-        if key in {"budget", "preferences", "selected_product_id"} and value
+        if key in {"budget", "preferences", "selected_product_id", "selectedProductId"} and value
     )
     if conversation.get("budget") or conversation.get("preferences") or prior_context:
         return False
@@ -288,28 +305,59 @@ def _clarification_for(text: str) -> str:
     return f"برای {category} حدود بودجه‌ات چقدره و چه ویژگی‌ای برات مهم‌تره؟"
 
 
+def _has_specific_model(text: str) -> bool:
+    normalized = normalize_fa(text)
+    return bool(re.search(
+        r"(?:(?:samsung|سامسونگ|galaxy|گلکسی|iphone|آیفون|xiaomi|شیائومی)\s*"
+        r"(?:[a-z]{1,3}\s*)?\d{2,4}\s*[a-z]{0,8}\b|"
+        r"[a-z]{1,3}\s*\d{2,4}\s*[a-z]{0,8}\b)",
+        normalized,
+        re.IGNORECASE,
+    ))
+
+
 def _apply_constraints(state: ConversationState, text: str) -> None:
+    normalized_text = normalize_fa(text).replace("٫", ".")
     budget_match = re.search(
-        r"(?:بودجه(?:\s*(?:من|ام|م))?|حداکثر|تا سقف|تا)\s*(?:حدود\s*)?([\d۰-۹٠-٩][\d۰-۹٠-٩.,٬]*)\s*(میلیارد|میلیون|هزار|م)?",
-        normalize_fa(text),
+        r"(?:بودجه(?:\s*(?:من|ام|م))?|حداکثر|تا سقف|تا)\s*(?:حدود\s*)?"
+        r"(?<![-\d])([\d][\d.,٬]*)\s*(میلیارد|میلیون|هزار|م)?",
+        normalized_text,
     )
     if budget_match:
-        amount_text = budget_match.group(1).replace(",", "").replace("٬", "")
+        amount_text = budget_match.group(1).replace("٬", "")
+        if "," in amount_text:
+            amount_text = amount_text.replace(",", "")
         try:
             amount = float(amount_text)
+            if not math.isfinite(amount):
+                raise ValueError("Budget is outside the supported numeric range")
             factor = {"میلیارد": 1_000_000_000, "میلیون": 1_000_000, "هزار": 1_000, "م": 1_000_000}.get(
                 budget_match.group(2), 1
             )
-            state.budget = int(amount * factor)
-        except ValueError:
+            calculated_budget = amount * factor
+            if not math.isfinite(calculated_budget) or calculated_budget > 10**15:
+                raise ValueError("Budget is outside the supported numeric range")
+            state.budget = int(calculated_budget)
+        except (OverflowError, ValueError):
             logger.info("Ignoring unparseable budget value: %r", amount_text)
 
-    normalized_text = normalize_fa(text).replace("٫", ".")
-    radius_match = re.search(r"(?:شعاع|محدوده)\s*([\d.]+)", normalized_text)
+    radius_match = re.search(
+        r"(?:شعاع|محدوده)\s*(\d+(?:\.\d+)?)(?![\d.])",
+        normalized_text,
+    )
     if radius_match:
-        state.radius_km = float(normalize_fa(radius_match.group(1)))
+        radius = float(radius_match.group(1))
+        if 0 <= radius <= 100:
+            state.radius_km = radius
 
-    if "قسطی" in text or "اقساط" in text:
+    negative_installment = re.search(
+        r"(?:قسطی|اقساط|قسط)\s*(?:نمی\s*(?:خوام|خواهم)|نمیخوام|نمیخواهم|نه)|"
+        r"بدون\s+(?:خرید\s+)?(?:قسطی|قسط|اقساط)",
+        normalized_text,
+    )
+    if negative_installment:
+        state.filters.installment = False
+    elif "قسطی" in normalized_text or "اقساط" in normalized_text:
         state.filters.installment = True
     if "ارسال فوری" in text:
         state.filters.express = True
@@ -379,6 +427,11 @@ def _update_conversation(state: ConversationState, graph_state: AgentState) -> N
                     state.selected_product_id = call["args"].get("product_id")
                 if call["name"] == "compare_shops":
                     state.selected_shop_ids = call["args"].get("shop_ids", [])
+                    state.selected_offer_ids = call["args"].get("offer_ids", [])
+                if call["name"] in {"inquire_shop", "get_shop_location_hint"}:
+                    offer_id = call["args"].get("offer_id")
+                    if offer_id:
+                        state.selected_offer_ids = [offer_id]
         elif isinstance(message, ToolMessage) and message.name == "resolve_location":
             resolved = (parse_tool_payload(message.content) or {}).get("data")
             if resolved:

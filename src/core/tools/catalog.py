@@ -17,6 +17,10 @@ _PHONE_MODEL_ALIASES = {
     "سامسونگ": "samsung",
     "شیائومی": "xiaomi",
     "هواوی": "huawei",
+    "samsung": "سامسونگ",
+    "iphone": "آیفون",
+    "xiaomi": "شیائومی",
+    "huawei": "هواوی",
 }
 
 
@@ -35,7 +39,7 @@ def search_products(
     if not normalized:
         return tool_result("dataset", [])
 
-    phone_query = bool(re.search(r"گوشی|موبایل|تلفن همراه", normalized)) and "گوشی پزشکی" not in normalized
+    phone_query = _is_phone_query(normalized)
     with database(readonly=True) as connection:
         if phone_query:
             model_terms = _phone_model_terms(normalized)
@@ -91,6 +95,7 @@ def _phone_model_terms(query: str) -> list[str]:
     ignored = {
         "گوشی", "موبایل", "تلفن", "همراه", "برای", "مدل", "میخوام", "می", "خوام",
         "عکاسی", "بازی", "گیم", "روزمره", "دانشگاه", "کار", "سفر", "بودجه",
+        "galaxy", "گلکسی",
         "حداکثر", "میلیون", "هزار", "تا", "تومان",
         "camera", "photo", "photography", "video", "selfie", "gaming", "game",
         "battery", "storage", "for", "the", "with", "phone", "smartphone", "mobile",
@@ -107,6 +112,17 @@ def _phone_model_terms(query: str) -> list[str]:
     return terms if has_model_identifier else []
 
 
+def _is_phone_query(query: str) -> bool:
+    if "گوشی پزشکی" in query:
+        return False
+    if re.search(r"گوشی|موبایل|تلفن همراه", query):
+        return True
+    # Common Samsung Galaxy S/A series queries are often written without "گوشی".
+    return bool(
+        re.search(r"(?:samsung|سامسونگ|galaxy|گلکسی)\s*(?:s|a|z)?\s*\d{2}\s*(?:fe|ultra|plus)?", query)
+    )
+
+
 def _search_exact_phone_model(
     connection, terms: list[str], category: str | None, max_price: int | None, limit: int,
 ):
@@ -117,28 +133,29 @@ def _search_exact_phone_model(
         "p.title_norm NOT LIKE '%ماکت%'",
     ]
     parameters: list[object] = []
+    for term in terms:
+        conditions.append(
+            "(p.title_norm LIKE ? OR lower(coalesce(p.model, '')) LIKE ? "
+            "OR lower(coalesce(p.brand, '')) LIKE ? OR p.title_norm LIKE ? "
+            "OR lower(coalesce(p.model, '')) LIKE ? OR lower(coalesce(p.brand, '')) LIKE ?)"
+        )
+        patterns = (f"%{term}%", f"%{_PHONE_MODEL_ALIASES.get(term, term)}%")
+        parameters.extend((*([patterns[0]] * 3), *([patterns[1]] * 3)))
     normalized_terms = list(
         dict.fromkeys(_PHONE_MODEL_ALIASES.get(term, term) for term in terms)
     )
-    for term in normalized_terms:
-        conditions.append(
-            "(p.title_norm LIKE ? OR lower(coalesce(p.model, '')) LIKE ?)"
-        )
-        pattern = f"%{term}%"
-        parameters.extend((pattern, pattern))
-    model_terms = [term for term in normalized_terms if re.fullmatch(r"[a-z]+|\d+", term)]
-    if any(re.search(r"[a-z]", term) for term in model_terms) and any(
-        term.isdigit() for term in model_terms
-    ):
-        conditions.append("(p.model IS NULL OR lower(p.model) = ?)")
-        parameters.append(" ".join(model_terms))
+    model_terms = [
+        term for term in normalized_terms
+        if re.fullmatch(r"[a-z0-9]+", term)
+        and term not in {"samsung", "iphone", "xiaomi", "huawei"}
+    ]
     if category:
         conditions.append("p.category_norm LIKE ?")
         parameters.append(f"%{normalize_fa(category)}%")
     if max_price is not None:
         conditions.append("o.price <= ?")
         parameters.append(max_price)
-    parameters.extend((" ".join(model_terms), min(limit, 20)))
+    parameters.extend(("".join(model_terms), min(limit, 20)))
     rows = connection.execute(
         f"""
         SELECT p.*
@@ -146,7 +163,7 @@ def _search_exact_phone_model(
         JOIN offers AS o ON o.product_id = p.id
         WHERE {' AND '.join(conditions)}
         GROUP BY p.id
-        ORDER BY CASE WHEN lower(coalesce(p.model, '')) = ? THEN 0 ELSE 1 END,
+        ORDER BY CASE WHEN replace(lower(coalesce(p.model, '')), ' ', '') = ? THEN 0 ELSE 1 END,
                  MIN(o.price), p.title
         LIMIT ?
         """,

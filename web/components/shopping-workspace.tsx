@@ -31,6 +31,7 @@ import type {
   ChatEntry,
   ChatTurn,
   ConversationState,
+  DataSource,
   Product,
   ShopResult,
   StreamEvent,
@@ -45,6 +46,7 @@ const INITIAL_CONVERSATION: ConversationState = {
   filters: { installment: false, express: false, openNow: false },
   selectedProductId: null,
   selectedShopIds: [],
+  selectedOfferIds: [],
   preferences: {},
 };
 
@@ -54,8 +56,6 @@ const SUGGESTIONS = [
   { label: "لپ‌تاپ برای دانشگاه", icon: Laptop },
   { label: "هدفون روزمره", icon: Headphones },
 ];
-
-type OfferSearchMode = "matched" | "relaxed" | "wider" | "empty";
 
 const TOOL_LABELS: Record<string, string> = {
   search_products: "در حال پیدا کردن مدل‌های مناسب",
@@ -77,6 +77,8 @@ interface SavedWorkspace {
   messages: ChatEntry[];
   history: ChatTurn[];
   userId: string;
+  marketplaceProduct?: Product | null;
+  marketplaceResults?: ShopResult[];
 }
 
 export function ShoppingWorkspace() {
@@ -87,6 +89,7 @@ export function ShoppingWorkspace() {
     radiusKm: 4,
     openNow: false,
     installment: false,
+    express: false,
   });
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [history, setHistory] = useState<ChatTurn[]>([]);
@@ -97,7 +100,6 @@ export function ShoppingWorkspace() {
   const [offersBusy, setOffersBusy] = useState(false);
   const [marketplaceProduct, setMarketplaceProduct] = useState<Product | null>(null);
   const [marketplaceResults, setMarketplaceResults] = useState<ShopResult[]>([]);
-  const [marketplaceMode, setMarketplaceMode] = useState<OfferSearchMode>("matched");
   const [marketplaceError, setMarketplaceError] = useState("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [apiHealth, setApiHealth] = useState<"checking" | "ready" | "offline" | "unconfigured">("checking");
@@ -107,9 +109,14 @@ export function ShoppingWorkspace() {
   const [locationBusy, setLocationBusy] = useState(false);
   const scrollArea = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const offerSearchSequence = useRef(0);
+  const selectionVersion = useRef(0);
+  const mobileFilterDialog = useRef<HTMLDivElement>(null);
+  const mobileFilterOpener = useRef<HTMLButtonElement>(null);
+  const mobileFilterClose = useRef<HTMLButtonElement>(null);
 
   const selectedProductId = conversation.selectedProductId;
-  const selectedShopIds = conversation.selectedShopIds ?? [];
+  const selectedOfferIds = conversation.selectedOfferIds ?? [];
   const activeToolText = useMemo(() => {
     const latest = Object.values(activeTools).at(-1);
     return latest ?? "";
@@ -121,9 +128,17 @@ export function ShoppingWorkspace() {
       if (saved) {
         const data = JSON.parse(saved) as Partial<SavedWorkspace>;
         if (data.conversation) setConversation(data.conversation);
-        if (data.filters) setFilters(data.filters);
-        if (data.messages) setMessages(data.messages);
+        if (data.filters) {
+          setFilters({
+            ...data.filters,
+            express: data.filters.express ?? false,
+            budget: data.filters.budget || (data.conversation?.budget ? formatNumber(data.conversation.budget) : ""),
+          });
+        }
+        if (data.messages) setMessages(restoreMessages(data.messages));
         if (data.history) setHistory(data.history);
+        if (data.marketplaceProduct) setMarketplaceProduct(data.marketplaceProduct);
+        if (data.marketplaceResults) setMarketplaceResults(data.marketplaceResults);
         if (data.userId) setUserId(data.userId);
       } else {
         setUserId(`web-${window.crypto.randomUUID()}`);
@@ -136,9 +151,53 @@ export function ShoppingWorkspace() {
 
   useEffect(() => {
     if (!ready) return;
-    const saved: SavedWorkspace = { conversation, filters, messages, history, userId };
+    const saved: SavedWorkspace = {
+      conversation,
+      filters,
+      messages,
+      history,
+      userId,
+      marketplaceProduct,
+      marketplaceResults,
+    };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
-  }, [conversation, filters, history, messages, ready, userId]);
+  }, [conversation, filters, history, marketplaceProduct, marketplaceResults, messages, ready, userId]);
+
+  useEffect(() => {
+    if (!mobileFiltersOpen) return;
+    const dialog = mobileFilterDialog.current;
+    mobileFilterClose.current?.focus();
+
+    function handleDialogKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileFiltersOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      mobileFilterOpener.current?.focus();
+    };
+  }, [mobileFiltersOpen]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -163,6 +222,7 @@ export function ShoppingWorkspace() {
   ) {
     const message = (messageOverride ?? draft).trim();
     if (!message || busy) return;
+    const selectionVersionAtRequest = selectionVersion.current;
 
     setError("");
     setNotice("");
@@ -184,12 +244,13 @@ export function ShoppingWorkspace() {
 
     let nextConversation: ConversationState = {
       ...(conversationOverride ?? conversation),
-      budget: filters.budget.trim() ? parseToman(filters.budget) : (conversationOverride ?? conversation).budget,
+      budget: parseToman(filters.budget),
       radiusKm: filters.radiusKm,
       filters: {
         ...(conversationOverride ?? conversation).filters,
         openNow: filters.openNow,
         installment: filters.installment,
+        express: filters.express,
       },
     };
 
@@ -199,7 +260,7 @@ export function ShoppingWorkspace() {
       setLocationBusy(true);
       try {
         const point = await resolveLocation(locationText);
-        nextConversation = { ...nextConversation, location: { ...point, label: locationText } };
+        nextConversation = { ...nextConversation, location: { ...point, label: point.label ?? locationText } };
         setConversation(nextConversation);
         setNotice(`محدوده روی ${locationText} تنظیم شد.`);
       } catch (locationError) {
@@ -266,27 +327,32 @@ export function ShoppingWorkspace() {
       if (event.type === "response" && event.response) {
         onResponse(event.response.text);
         updateMessage(targetId, { content: event.response.text, cards: event.response.cards });
-        setConversation((current) => ({
-          ...current,
-          selectedProductId: current.selectedProductId ?? inferProductId(event.response?.cards ?? []),
-        }));
+        if (selectionVersion.current === selectionVersionAtRequest) {
+          setConversation((current) => ({
+            ...current,
+            selectedProductId: current.selectedProductId ?? inferProductId(event.response?.cards ?? []),
+          }));
+        }
       }
       if (event.type === "conversation" && event.conversation) {
         const updatedConversation = {
           ...event.conversation,
           location: event.conversation.location
-            ? { ...event.conversation.location, label: filters.location || event.conversation.location.label }
+            ? { ...event.conversation.location }
             : null,
         };
-        setConversation(updatedConversation);
-        setFilters((current) => ({
-          ...current,
-          location: updatedConversation.location?.label ?? current.location,
-          budget: updatedConversation.budget ? formatNumber(updatedConversation.budget) : current.budget,
-          radiusKm: updatedConversation.radiusKm,
-          openNow: Boolean(updatedConversation.filters.openNow),
-          installment: Boolean(updatedConversation.filters.installment),
-        }));
+        if (selectionVersion.current === selectionVersionAtRequest) {
+          setConversation(updatedConversation);
+          setFilters((current) => ({
+            ...current,
+            location: updatedConversation.location?.label ?? current.location,
+            budget: updatedConversation.budget ? formatNumber(updatedConversation.budget) : "",
+            radiusKm: updatedConversation.radiusKm,
+            openNow: Boolean(updatedConversation.filters.openNow),
+            installment: Boolean(updatedConversation.filters.installment),
+            express: Boolean(updatedConversation.filters.express),
+          }));
+        }
       }
       if (event.type === "error") {
         const messageText = event.message ?? "پاسخ‌گویی با مشکل روبه‌رو شد.";
@@ -313,25 +379,31 @@ export function ShoppingWorkspace() {
     nextFilters: FilterValues,
     currentState: ConversationState,
   ) {
+    const requestId = ++offerSearchSequence.current;
+    selectionVersion.current += 1;
     setOffersBusy(true);
     setLocationBusy(false);
     setError("");
     setMarketplaceError("");
     setMobileFiltersOpen(false);
     setMarketplaceProduct(product);
+    setMarketplaceResults([]);
 
     let nextConversation: ConversationState = {
       ...currentState,
       selectedProductId: product.id,
       selectedShopIds: [],
-      budget: nextFilters.budget.trim() ? parseToman(nextFilters.budget) : currentState.budget,
+      selectedOfferIds: [],
+      budget: parseToman(nextFilters.budget),
       radiusKm: nextFilters.radiusKm,
       filters: {
         ...currentState.filters,
         openNow: nextFilters.openNow,
         installment: nextFilters.installment,
+        express: nextFilters.express,
       },
     };
+    setConversation(nextConversation);
 
     try {
       const locationLabel = nextFilters.location.trim();
@@ -339,9 +411,10 @@ export function ShoppingWorkspace() {
       if (locationLabel && locationLabel !== currentLabel) {
         setLocationBusy(true);
         const resolved = await resolveLocation(locationLabel);
+        if (requestId !== offerSearchSequence.current) return;
         nextConversation = {
           ...nextConversation,
-          location: { lat: resolved.lat, lng: resolved.lng, label: locationLabel },
+          location: { lat: resolved.lat, lng: resolved.lng, label: resolved.label ?? locationLabel },
         };
       }
 
@@ -352,40 +425,27 @@ export function ShoppingWorkspace() {
         radius: nextFilters.radiusKm,
         maxPrice: nextConversation.budget,
         installment: nextFilters.installment,
+        express: nextFilters.express,
         openNow: nextFilters.openNow,
       };
-      let results = await searchOffers(query);
-      let mode: OfferSearchMode = "matched";
-      if (!results.length) {
-        results = await searchOffers({ ...query, maxPrice: null, installment: false, openNow: false });
-        mode = results.length ? "relaxed" : "empty";
-      }
-      if (!results.length) {
-        results = await searchOffers({
-          ...query,
-          radius: 100,
-          maxPrice: null,
-          installment: false,
-          openNow: false,
-        });
-        mode = results.length ? "wider" : "empty";
-      }
+      const results = await searchOffers(query);
+      if (requestId !== offerSearchSequence.current) return;
       setMarketplaceProduct(product);
       setMarketplaceResults(results);
-      setMarketplaceMode(mode);
       setConversation(nextConversation);
-      setNotice(mode === "matched"
+      setNotice(results.length
         ? `${formatNumber(results.length)} فروشگاه با شرایط فعلی پیدا شد.`
-        : results.length
-          ? "نتیجه‌ی منطبق نبود؛ گزینه‌های نزدیک‌تر یا دورتر را با توضیح می‌بینی."
-          : "در دیتاست آفر مکانی پیدا نشد؛ می‌توانی فیلتر یا مرکز بازار را بررسی کنی.");
+        : "در دیتاست آفر مکانی پیدا نشد؛ می‌توانی شعاع را بیشتر کنی، فیلترها را تغییر بدهی یا مرکز بازار را ببینی.");
     } catch (searchError) {
+      if (requestId !== offerSearchSequence.current) return;
       const messageText = searchError instanceof Error ? searchError.message : "جستجوی فروشگاه‌ها انجام نشد.";
       setError(messageText);
       setMarketplaceError(messageText);
     } finally {
-      setOffersBusy(false);
-      setLocationBusy(false);
+      if (requestId === offerSearchSequence.current) {
+        setOffersBusy(false);
+        setLocationBusy(false);
+      }
     }
   }
 
@@ -394,61 +454,83 @@ export function ShoppingWorkspace() {
   }
 
   function handleAskInquiry(result: ShopResult) {
+    const offerId = result.offer.id;
+    if (!offerId) {
+      setNotice("این آفر قدیمی شناسه‌ی قابل استعلام ندارد؛ فروشگاه‌ها را دوباره جست‌وجو کن.");
+      return;
+    }
+    selectionVersion.current += 1;
     const next = {
       ...conversation,
       selectedProductId: result.offer.productId,
       selectedShopIds: [result.shop.id],
+      selectedOfferIds: [offerId],
     };
     setConversation(next);
     void submitMessage(
-      `برای محصول ${result.offer.productId} در فروشگاه ${result.shop.id} استعلام شبیه‌سازی‌شده بگیر و موجودی را روشن کن.`,
+      `برای محصول ${result.offer.productId} و آفر ${offerId} در فروشگاه ${result.shop.id} استعلام شبیه‌سازی‌شده بگیر و موجودی را روشن کن.`,
       next,
     );
   }
 
   function handlePrepareVisit(result: ShopResult) {
+    const offerId = result.offer.id;
+    if (!offerId) {
+      setNotice("این آفر قدیمی شناسه‌ی قابل مراجعه ندارد؛ فروشگاه‌ها را دوباره جست‌وجو کن.");
+      return;
+    }
+    selectionVersion.current += 1;
     const next = {
       ...conversation,
       selectedProductId: result.offer.productId,
       selectedShopIds: [result.shop.id],
+      selectedOfferIds: [offerId],
     };
     setConversation(next);
     void submitMessage(
-      `برای محصول ${result.offer.productId} در فروشگاه ${result.shop.id} کارت نهایی مراجعه را با قیمت، تاریخ قیمت، ساعت کاری، آدرس پاساژ، آخرین استعلام نمونه‌سازی و یک فروشگاه پشتیبان بساز.`,
+      `برای محصول ${result.offer.productId} و آفر ${offerId} در فروشگاه ${result.shop.id} کارت نهایی مراجعه را با قیمت، تاریخ قیمت، ساعت کاری، آدرس پاساژ، آخرین استعلام نمونه‌سازی و یک فروشگاه پشتیبان بساز.`,
       next,
     );
   }
 
   function handleToggleCompare(result: ShopResult) {
+    const offerId = result.offer.id;
+    if (!offerId) {
+      setNotice("این آفر قدیمی شناسه‌ی قابل مقایسه ندارد؛ فروشگاه‌ها را دوباره جست‌وجو کن.");
+      return;
+    }
+    selectionVersion.current += 1;
     if (conversation.selectedProductId && conversation.selectedProductId !== result.offer.productId) {
-      setNotice("برای مقایسه، فروشگاه‌های یک محصول را انتخاب کن؛ انتخاب قبلی پاک شد.");
+      setNotice("برای مقایسه، آفرهای یک محصول را انتخاب کن؛ انتخاب قبلی پاک شد.");
       setConversation((current) => ({
         ...current,
         selectedProductId: result.offer.productId,
         selectedShopIds: [result.shop.id],
+        selectedOfferIds: [offerId],
       }));
       return;
     }
-    const isSelected = selectedShopIds.includes(result.shop.id);
+    const isSelected = selectedOfferIds.includes(offerId);
     const nextIds = isSelected
-      ? selectedShopIds.filter((id) => id !== result.shop.id)
-      : [...selectedShopIds, result.shop.id].slice(-3);
-    setNotice(nextIds.length > 1 ? `${formatNumber(nextIds.length)} فروشگاه برای مقایسه انتخاب شد.` : "برای مقایسه، یک فروشگاه دیگر هم انتخاب کن.");
+      ? selectedOfferIds.filter((id) => id !== offerId)
+      : [...selectedOfferIds, offerId].slice(-3);
+    setNotice(nextIds.length > 1 ? `${formatNumber(nextIds.length)} آفر برای مقایسه انتخاب شد.` : "برای مقایسه، یک آفر دیگر هم انتخاب کن.");
     setConversation((current) => {
       return {
         ...current,
         selectedProductId: result.offer.productId,
-        selectedShopIds: nextIds,
+        selectedShopIds: [],
+        selectedOfferIds: nextIds,
       };
     });
   }
 
   function handleCompare() {
-    if (!conversation.selectedProductId || selectedShopIds.length < 2 || busy) return;
+    if (!conversation.selectedProductId || selectedOfferIds.length < 2 || busy) return;
     const productId = conversation.selectedProductId;
-    const shops = selectedShopIds.join("، ");
+    const offers = selectedOfferIds.join("، ");
     void submitMessage(
-      `برای محصول ${productId} این فروشگاه‌ها را با هم مقایسه کن: ${shops}`,
+      `برای محصول ${productId} این شناسه‌های آفر را با هم مقایسه کن: ${offers}`,
       conversation,
     );
   }
@@ -457,6 +539,11 @@ export function ShoppingWorkspace() {
     const product = marketplaceProduct ?? findProduct(messages, selectedProductId);
     if (!product || offersBusy) return;
     void searchForProduct(product, filters, conversation);
+  }
+
+  function handleFilterChange(nextFilters: FilterValues) {
+    selectionVersion.current += 1;
+    setFilters(nextFilters);
   }
 
   function handleWidenRadius() {
@@ -468,7 +555,7 @@ export function ShoppingWorkspace() {
 
   function handleRelaxFilters() {
     if (!marketplaceProduct || offersBusy) return;
-    const nextFilters = { ...filters, budget: "", openNow: false, installment: false };
+    const nextFilters = { ...filters, budget: "", openNow: false, installment: false, express: false };
     setFilters(nextFilters);
     void searchForProduct(marketplaceProduct, nextFilters, { ...conversation, budget: null });
   }
@@ -496,6 +583,7 @@ export function ShoppingWorkspace() {
       setError("مرورگر امکان دریافت موقعیت را ندارد؛ نام محله را وارد کن.");
       return;
     }
+    selectionVersion.current += 1;
     setLocationBusy(true);
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
@@ -520,6 +608,7 @@ export function ShoppingWorkspace() {
       radiusKm: 4,
       openNow: false,
       installment: false,
+      express: false,
     };
     const nextConversation = {
       ...conversation,
@@ -574,7 +663,14 @@ export function ShoppingWorkspace() {
 
         <div className="mobile-filter-row">
           <span><MapPin size={14} /> {filters.location || "تهران"}</span>
-          <button type="button" onClick={() => setMobileFiltersOpen(true)} aria-expanded={mobileFiltersOpen}>
+          <button
+            ref={mobileFilterOpener}
+            type="button"
+            onClick={() => setMobileFiltersOpen(true)}
+            aria-expanded={mobileFiltersOpen}
+            aria-haspopup="dialog"
+            aria-controls="mobile-filter-dialog"
+          >
             <SlidersHorizontal size={15} /> شرایط خرید
           </button>
         </div>
@@ -604,7 +700,7 @@ export function ShoppingWorkspace() {
                         {entry.role === "assistant" && entry.cards && entry.cards.length > 0 && (
                           <ResponseCards
                             cards={entry.cards}
-                            selectedShopIds={selectedShopIds}
+                            selectedOfferIds={selectedOfferIds}
                             onChooseProduct={handleChooseProduct}
                             onAskInquiry={handleAskInquiry}
                             onToggleCompare={handleToggleCompare}
@@ -628,7 +724,6 @@ export function ShoppingWorkspace() {
                   product={marketplaceProduct}
                   center={conversation.location ?? DEFAULT_LOCATION}
                   results={marketplaceResults}
-                  mode={marketplaceMode}
                   error={marketplaceError}
                   busy={offersBusy}
                   onWidenRadius={handleWidenRadius}
@@ -636,7 +731,7 @@ export function ShoppingWorkspace() {
                   onSuggestMarket={handleSuggestMarket}
                   onSearchWeb={handleSearchWeb}
                   canWidenRadius={filters.radiusKm < 20}
-                  selectedShopIds={selectedShopIds}
+                  selectedOfferIds={selectedOfferIds}
                   onToggleCompare={handleToggleCompare}
                   onAskInquiry={handleAskInquiry}
                   onPrepareVisit={handlePrepareVisit}
@@ -649,9 +744,9 @@ export function ShoppingWorkspace() {
             )}
             {error && <div className="inline-error" role="alert"><CircleHelp size={15} />{error}</div>}
 
-            {selectedShopIds.length > 1 && conversation.selectedProductId && (
+            {selectedOfferIds.length > 1 && conversation.selectedProductId && (
               <div className="compare-bar">
-                <span><ArrowLeftRight size={16} /> {formatNumber(selectedShopIds.length)} فروشگاه انتخاب شده</span>
+                <span><ArrowLeftRight size={16} /> {formatNumber(selectedOfferIds.length)} آفر انتخاب شده</span>
                 <button type="button" onClick={handleCompare} disabled={busy}>مقایسه‌ی انتخاب‌ها <ChevronLeft size={15} /></button>
               </div>
             )}
@@ -679,23 +774,34 @@ export function ShoppingWorkspace() {
           </section>
 
           <FilterPanel
+            idPrefix="desktop"
             values={filters}
             busy={busy || locationBusy || offersBusy}
             hasSelectedProduct={Boolean(selectedProductId)}
-            onChange={setFilters}
+            onChange={handleFilterChange}
             onUseCurrentLocation={handleUseCurrentLocation}
             onApply={handleApplyFilters}
             onReset={handleResetFilters}
           />
           {mobileFiltersOpen && (
             <div className="mobile-filter-overlay" role="presentation" onClick={() => setMobileFiltersOpen(false)}>
-              <div className="mobile-filter-sheet" role="dialog" aria-modal="true" aria-label="فیلترهای خرید" onClick={(event) => event.stopPropagation()}>
-                <button type="button" className="close-sheet" onClick={() => setMobileFiltersOpen(false)} aria-label="بستن فیلترها"><X size={19} /></button>
+              <div
+                id="mobile-filter-dialog"
+                ref={mobileFilterDialog}
+                className="mobile-filter-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label="فیلترهای خرید"
+                tabIndex={-1}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button ref={mobileFilterClose} type="button" className="close-sheet" onClick={() => setMobileFiltersOpen(false)} aria-label="بستن فیلترها"><X size={19} /></button>
                 <FilterPanel
+                  idPrefix="mobile"
                   values={filters}
                   busy={busy || locationBusy || offersBusy}
                   hasSelectedProduct={Boolean(selectedProductId)}
-                  onChange={setFilters}
+                  onChange={handleFilterChange}
                   onUseCurrentLocation={handleUseCurrentLocation}
                   onApply={handleApplyFilters}
                   onReset={handleResetFilters}
@@ -742,7 +848,9 @@ function inferProductId(cards: AssistantCard[]): string | null {
     if (card.kind === "shop_cards" || card.kind === "compare") {
       if (card.results[0]) return card.results[0].offer.productId;
     }
-    if (card.kind === "alternatives" && card.results[0]) return card.results[0].offer.productId;
+    if (card.kind === "alternatives" && card.options?.[0]?.results[0]) {
+      return card.options[0].results[0].offer.productId;
+    }
   }
   return null;
 }
@@ -752,10 +860,69 @@ function findProduct(messages: ChatEntry[], productId: string | null): Product |
   for (const entry of [...messages].reverse()) {
     for (const card of entry.cards ?? []) {
       if (card.kind === "product_cards" || card.kind === "alternatives") {
-        const product = card.products.find((item) => item.id === productId);
+        const products = card.kind === "product_cards"
+          ? card.products
+          : (card.options ?? []).map((option) => option.product);
+        const product = products.find((item) => item.id === productId);
         if (product) return product;
       }
     }
   }
   return { id: productId, titleFa: "محصول انتخاب‌شده" };
+}
+
+function restoreMessages(value: unknown): ChatEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((entry): ChatEntry[] => {
+    if (
+      !isRecord(entry)
+      || typeof entry.id !== "string"
+      || typeof entry.content !== "string"
+      || (entry.role !== "user" && entry.role !== "assistant")
+    ) {
+      return [];
+    }
+    const cards = Array.isArray(entry.cards)
+      ? entry.cards.flatMap(restoreCard)
+      : undefined;
+    return [{ ...entry, cards } as ChatEntry];
+  });
+}
+
+function restoreCard(value: unknown): AssistantCard[] {
+  if (!isRecord(value) || typeof value.kind !== "string") return [];
+  if (value.kind !== "alternatives") return [value as unknown as AssistantCard];
+  if (Array.isArray(value.options)) return [value as unknown as AssistantCard];
+
+  const products = Array.isArray(value.products)
+    ? value.products.filter(
+      (product): product is Record<string, unknown> => isRecord(product) && typeof product.id === "string",
+    ) as unknown as Product[]
+    : [];
+  const results = Array.isArray(value.results)
+    ? value.results.filter(
+      (result): result is Record<string, unknown> => isRecord(result) && isRecord(result.offer),
+    ) as unknown as ShopResult[]
+    : [];
+  const options = products.map((product) => ({
+    product,
+    results: results.filter((result) => (
+      isRecord(result.offer) && result.offer.productId === product.id
+    )),
+  }));
+
+  return [{
+    kind: "alternatives",
+    source: isDataSource(value.source) ? value.source : "dataset",
+    options,
+  } as AssistantCard];
+}
+
+function isDataSource(value: unknown): value is DataSource {
+  return value === "dataset" || value === "web" || value === "ai_knowledge" || value === "simulated";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

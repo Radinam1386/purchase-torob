@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import secrets
+import sqlite3
+import threading
+import time
+from collections import deque
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.core.agent import ChatTurn, ShoppingAgent, create_agent
 from src.core.config import settings
 from src.core.contract import ConversationState, ShopResult
+from src.core.database import database
 from src.core.tools.registry import TOOLS_BY_NAME
 
 logger = logging.getLogger("purchase_torob.api")
@@ -28,7 +35,7 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
     ],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
@@ -40,12 +47,12 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, allow_inf_nan=False)
 
     message: str = Field(min_length=1, max_length=4000)
-    user_id: str = Field(default="local", alias="userId")
+    user_id: str | None = Field(default=None, alias="userId", max_length=100)
     conversation: ConversationState | None = None
-    history: list[ChatMessage] = Field(default_factory=list)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=12)
 
 
 class LocationRequest(BaseModel):
@@ -53,7 +60,7 @@ class LocationRequest(BaseModel):
 
 
 class OffersRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, allow_inf_nan=False)
 
     product_id: str = Field(alias="productId", min_length=1, max_length=120)
     lat: float = Field(ge=-90, le=90)
@@ -61,6 +68,7 @@ class OffersRequest(BaseModel):
     radius: float = Field(default=4, ge=0, le=100)
     max_price: int | None = Field(default=None, alias="maxPrice", ge=0)
     installment: bool = False
+    express: bool = False
     open_now: bool = Field(default=False, alias="openNow")
 
 
@@ -76,29 +84,93 @@ def _agent() -> ShoppingAgent:
 
 @app.get("/api/health")
 def health() -> dict[str, bool | str]:
+    try:
+        with database(readonly=True) as connection:
+            for table in ("products", "shops", "offers", "product_fts", "market_hubs"):
+                if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is None:
+                    raise sqlite3.OperationalError(f"جدول {table} خالی است.")
+    except (OSError, sqlite3.Error) as error:
+        logger.info("Database readiness check failed: %s", error)
+        raise HTTPException(status_code=503, detail="پایگاه داده آماده نیست.") from error
     return {
-        "status": "ok",
-        "databaseReady": settings.database_path.exists(),
+        "status": "ready",
+        "databaseReady": True,
         "llmConfigured": bool(settings.llm_api_key and settings.llm_model and settings.llm_base_url),
     }
 
 
+@app.get("/api/live")
+def live() -> dict[str, str]:
+    return {"status": "alive"}
+
+
+_RATE_LIMIT = max(1, int(os.getenv("CHAT_RATE_LIMIT_PER_MINUTE", "15")))
+_MAX_CONCURRENT_CHATS = max(1, int(os.getenv("CHAT_MAX_CONCURRENT", "4")))
+_rate_history: dict[str, deque[float]] = {}
+_request_lock = threading.Lock()
+_active_chats = 0
+
+
+def _enforce_chat_limits(client_id: str) -> None:
+    now = time.monotonic()
+    with _request_lock:
+        history = _rate_history.setdefault(client_id, deque())
+        while history and now - history[0] >= 60:
+            history.popleft()
+        if len(history) >= _RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="درخواست‌های گفتگو در این بازه زیاد است؛ کمی بعد دوباره تلاش کن.",
+                headers={"Retry-After": "60"},
+            )
+        history.append(now)
+        if len(_rate_history) > 4096:
+            for key in tuple(_rate_history):
+                if not _rate_history[key] or now - _rate_history[key][-1] >= 60:
+                    _rate_history.pop(key, None)
+
+
+def _reserve_chat_slot() -> bool:
+    global _active_chats
+    with _request_lock:
+        if _active_chats >= _MAX_CONCURRENT_CHATS:
+            return False
+        _active_chats += 1
+        return True
+
+
+def _release_chat_slot() -> None:
+    global _active_chats
+    with _request_lock:
+        _active_chats = max(0, _active_chats - 1)
+
+
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
+async def chat_stream(http_request: Request, request: ChatRequest) -> StreamingResponse:
+    client_id = http_request.client.host if http_request.client else "unknown-client"
+    _enforce_chat_limits(client_id)
+    if not _reserve_chat_slot():
+        raise HTTPException(
+            status_code=503,
+            detail="گفتگوها موقتاً مشغول‌اند؛ چند لحظه‌ی دیگر تلاش کن.",
+        )
     try:
         agent = _agent()
     except Exception as error:
+        _release_chat_slot()
         logger.exception("Could not create shopping agent")
         raise HTTPException(status_code=503, detail="سرویس راهنمای خرید آماده نیست.") from error
 
     conversation = request.conversation or agent.initial_state()
     history: list[ChatTurn] = [turn.model_dump() for turn in request.history]
+    session_id = http_request.cookies.get("torob_session") or secrets.token_urlsafe(32)
+    new_session = http_request.cookies.get("torob_session") is None
 
     async def events() -> AsyncIterator[str]:
         try:
             async for event in agent.stream(
                 request.message,
-                user_id=request.user_id,
+                user_id=session_id,
                 conversation=conversation,
                 history=history,
             ):
@@ -112,8 +184,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         except Exception:
             logger.exception("Shopping conversation failed")
             yield _sse({"type": "error", "message": "پاسخ‌گویی با مشکل روبه‌رو شد؛ دوباره تلاش کن."})
+        finally:
+            _release_chat_slot()
 
-    return StreamingResponse(
+    response = StreamingResponse(
         events(),
         media_type="text/event-stream",
         headers={
@@ -121,6 +195,17 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+    if new_session:
+        response.set_cookie(
+            "torob_session",
+            session_id,
+            httponly=True,
+            secure=http_request.url.scheme == "https",
+            samesite="lax",
+            max_age=60 * 60 * 24 * 30,
+            path="/",
+        )
+    return response
 
 
 @app.post("/api/location/resolve")
@@ -148,6 +233,7 @@ async def search_offers(request: OffersRequest) -> OffersResponse:
             "radius": request.radius,
             "max_price": request.max_price,
             "installment": request.installment,
+            "express": request.express,
             "open_now": request.open_now,
         })
         return OffersResponse.model_validate(result)

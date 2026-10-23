@@ -10,11 +10,13 @@ from langchain_core.tools import tool
 from src.core.database import database
 from src.core.tools.common import tool_result
 from src.core.tools.schemas import LoadPreferencesInput, SavePreferenceInput
+from src.core.user_context import current_user_id
 
 
 @tool(args_schema=SavePreferenceInput)
-def save_user_preference(user_id: str, key: str, value: str) -> dict:
+def save_user_preference(key: str, value: object) -> dict:
     """ذخیره‌ی ترجیح پایدار کاربر برای گفتگوهای بعدی."""
+    user_id = current_user_id()
     with database() as connection:
         row = connection.execute(
             "SELECT preferences_json FROM user_preferences WHERE user_id = ?", (user_id,)
@@ -39,8 +41,9 @@ def save_user_preference(user_id: str, key: str, value: str) -> dict:
 
 
 @tool(args_schema=LoadPreferencesInput)
-def load_user_preferences(user_id: str) -> dict:
+def load_user_preferences() -> dict:
     """خواندن ترجیحات ذخیره‌شده‌ی کاربر."""
+    user_id = current_user_id()
     with database(readonly=True) as connection:
         row = connection.execute(
             "SELECT preferences_json FROM user_preferences WHERE user_id = ?", (user_id,)

@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.core.config import project_path, settings
+from src.core.database import database_write_lock
 from src.core.market_hubs import MARKET_HUBS
 from src.core.text import normalize_fa, parse_address, parse_json
 
@@ -72,19 +73,30 @@ def load_data() -> dict:
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(SCHEMA)
-        _preserve_user_data(connection, settings.database_path)
         _seed_market_hubs(connection)
         products = _load_products(connection, source_dir / "products.csv")
         shops = _load_shops(connection, source_dir / "shops.csv")
         offers = _load_offers(connection, source_dir / "offers.csv")
-        connection.execute("ANALYZE")
+        connection.execute("ANALYZE main")
         report = _quality_report(connection, products, shops, offers)
         connection.commit()
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         connection.close()
 
-    staging_path.replace(settings.database_path)
+    with database_write_lock(settings.database_path, exclusive=True):
+        connection = sqlite3.connect(staging_path)
+        try:
+            _preserve_user_data(connection, settings.database_path)
+            connection.commit()
+            if settings.database_path.exists():
+                connection.execute("DETACH DATABASE previous_database")
+            connection.execute("ANALYZE main")
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            connection.close()
+        staging_path.replace(settings.database_path)
     report_path = settings.database_path.parent / "quality-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report

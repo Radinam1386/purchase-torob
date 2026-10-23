@@ -27,7 +27,8 @@ class GetOffersInput(ToolInput):
 
 
 class CompareShopsInput(ToolInput):
-    shop_ids: list[str] = Field(min_length=1, max_length=8)
+    shop_ids: list[str] = Field(default_factory=list, max_length=8)
+    offer_ids: list[str] = Field(default_factory=list, max_length=8)
     product_id: str
     lat: float | None = None
     lng: float | None = None
@@ -40,6 +41,7 @@ class ShopInput(ToolInput):
 class VisitGuideInput(ToolInput):
     shop_id: str
     product_id: str | None = None
+    offer_id: str | None = None
     backup_shop_id: str | None = None
     lat: float | None = None
     lng: float | None = None
@@ -48,6 +50,7 @@ class VisitGuideInput(ToolInput):
 class InquiryInput(ToolInput):
     shop_id: str
     product_id: str
+    offer_id: str | None = None
 
 
 class AlternativesInput(ToolInput):
@@ -79,10 +82,9 @@ class LocationInput(ToolInput):
 
 
 class SavePreferenceInput(ToolInput):
-    user_id: str
     key: str
     value: object
 
 
 class LoadPreferencesInput(ToolInput):
-    user_id: str
+    pass

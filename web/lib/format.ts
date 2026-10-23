@@ -52,6 +52,7 @@ export function directionsUrl(lat?: number | null, lng?: number | null): string 
 export function parseToman(value: string): number | null {
   const normalized = value.trim().toLowerCase()
     .replace(/میلیارد|میلیون|تومان|هزار/g, (unit) => ` ${unit} `)
+    .replace(/٫/g, ".")
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
     .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
   const match = normalized.match(/([0-9][0-9,٬.]*)\s*(میلیارد|میلیون|هزار)?/);

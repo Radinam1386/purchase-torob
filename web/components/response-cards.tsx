@@ -27,7 +27,7 @@ import {
 import type { AssistantCard, Product, ShopResult } from "@/lib/contracts";
 
 interface CardActions {
-  selectedShopIds: string[];
+  selectedOfferIds: string[];
   onChooseProduct: (product: Product) => void;
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
@@ -40,7 +40,7 @@ interface ResponseCardsProps extends CardActions {
 
 export function ResponseCards({
   cards,
-  selectedShopIds,
+  selectedOfferIds,
   onChooseProduct,
   onAskInquiry,
   onToggleCompare,
@@ -54,7 +54,7 @@ export function ResponseCards({
         <CardRenderer
           key={`${card.kind}-${index}`}
           card={card}
-          selectedShopIds={selectedShopIds}
+          selectedOfferIds={selectedOfferIds}
           onChooseProduct={onChooseProduct}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
@@ -71,7 +71,7 @@ interface CardRendererProps extends CardActions {
 
 function CardRenderer({
   card,
-  selectedShopIds,
+  selectedOfferIds,
   onChooseProduct,
   onAskInquiry,
   onToggleCompare,
@@ -96,7 +96,7 @@ function CardRenderer({
           title="فروشگاه‌های دارای آفر"
           results={card.results}
           source={card.source}
-          selectedShopIds={selectedShopIds}
+          selectedOfferIds={selectedOfferIds}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
           onPrepareVisit={onPrepareVisit}
@@ -109,37 +109,35 @@ function CardRenderer({
           title="مقایسه‌ی فروشگاه‌ها"
           results={card.results}
           source={card.source}
-          selectedShopIds={selectedShopIds}
+          selectedOfferIds={selectedOfferIds}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
           onPrepareVisit={onPrepareVisit}
         />
       );
 
-    case "alternatives":
+    case "alternatives": {
+      const options = card.options ?? [];
       return (
         <CardShell icon={<PackageCheck size={17} />} title="جایگزین‌های نزدیک" source={card.source}>
-          {card.products.length > 0 && (
-            <div className="product-options">
-              {card.products.slice(0, 3).map((product) => (
-                <ProductOption key={product.id} product={product} onChoose={onChooseProduct} />
-              ))}
-            </div>
-          )}
-          {card.results.length > 0 && (
-            <ShopResultList
-              results={card.results}
-              selectedShopIds={selectedShopIds}
-              onAskInquiry={onAskInquiry}
-              onToggleCompare={onToggleCompare}
-              onPrepareVisit={onPrepareVisit}
-            />
-          )}
-          {!card.products.length && !card.results.length && (
+          {options.map(({ product, results }) => (
+            <section className="alternative-option" key={product.id}>
+              <ProductOption product={product} onChoose={onChooseProduct} />
+              <ShopResultList
+                results={results}
+                selectedOfferIds={selectedOfferIds}
+                onAskInquiry={onAskInquiry}
+                onToggleCompare={onToggleCompare}
+                onPrepareVisit={onPrepareVisit}
+              />
+            </section>
+          ))}
+          {!options.length && (
             <EmptyResults>در این محدوده جایگزین ثبت‌شده‌ای پیدا نشد.</EmptyResults>
           )}
         </CardShell>
       );
+    }
 
     case "inquiry": {
       const inquiry = card.inquiry;
@@ -304,7 +302,7 @@ function ShopResultsCard({
   title,
   results,
   source,
-  selectedShopIds,
+  selectedOfferIds,
   onAskInquiry,
   onToggleCompare,
   onPrepareVisit,
@@ -312,7 +310,7 @@ function ShopResultsCard({
   title: string;
   results: ShopResult[];
   source: Parameters<typeof sourceLabel>[0];
-  selectedShopIds: string[];
+  selectedOfferIds: string[];
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
   onPrepareVisit: (result: ShopResult) => void;
@@ -321,7 +319,7 @@ function ShopResultsCard({
     <CardShell icon={<Store size={17} />} title={title} source={source}>
       <ShopResultList
         results={results}
-        selectedShopIds={selectedShopIds}
+        selectedOfferIds={selectedOfferIds}
         onAskInquiry={onAskInquiry}
         onToggleCompare={onToggleCompare}
         onPrepareVisit={onPrepareVisit}
@@ -332,13 +330,13 @@ function ShopResultsCard({
 
 function ShopResultList({
   results,
-  selectedShopIds,
+  selectedOfferIds,
   onAskInquiry,
   onToggleCompare,
   onPrepareVisit,
 }: {
   results: ShopResult[];
-  selectedShopIds: string[];
+  selectedOfferIds: string[];
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
   onPrepareVisit: (result: ShopResult) => void;
@@ -349,11 +347,12 @@ function ShopResultList({
     <div className="shop-results">
       {results.slice(0, 3).map((result, index) => {
         const shop = result.shop;
+        const offerId = result.offer?.id;
         const url = directionsUrl(shop.lat, shop.lng);
-        const isSelected = selectedShopIds.includes(shop.id);
+        const isSelected = offerId ? selectedOfferIds.includes(offerId) : false;
         const open = result.openNow.value;
         return (
-          <article className="shop-result" key={`${shop.id}-${result.offer.productId}-${index}`}>
+          <article className="shop-result" key={offerId ?? `${shop.id}-${result.offer.productId}-${index}`}>
             <div className="shop-result-top">
               <div className="shop-number">{String(index + 1).padStart(2, "۰")}</div>
               <div className="shop-main">
@@ -371,6 +370,9 @@ function ShopResultList({
             <div className="shop-price-row">
               <strong>{formatPrice(result.offer.price, result.offer.priceUnit)}</strong>
               <span><MapPin size={13} /> {formatDistance(result.distanceKm)}</span>
+              <span className="offer-id">
+                {offerId ? `آفر #${offerId.slice(-6)}` : "شناسه‌ی آفر قدیمی"}
+              </span>
             </div>
 
             <p className="shop-reason">{result.reasons[0] || "آفر این کالا در دیتاست ترب ثبت شده است."}</p>
@@ -383,10 +385,12 @@ function ShopResultList({
               )}
             </div>
 
-            {(shop.installment || shop.tarobPayInStore || shop.expressDelivery) && (
+            {(shop.installment !== false || shop.tarobPayInStore !== false || shop.expressDelivery === true) && (
               <div className="shop-benefits">
-                {shop.installment && <span>قسطی حضوری</span>}
-                {shop.tarobPayInStore && <span>ترب‌پی حضوری</span>}
+                {shop.installment === true && <span>قسطی حضوری</span>}
+                {shop.installment == null && <span>قسطی حضوری: نامشخص</span>}
+                {shop.tarobPayInStore === true && <span>ترب‌پی حضوری</span>}
+                {shop.tarobPayInStore == null && <span>ترب‌پی حضوری: نامشخص</span>}
                 {shop.expressDelivery && <span>ارسال فوری</span>}
               </div>
             )}
@@ -397,16 +401,17 @@ function ShopResultList({
                   <Navigation size={15} /> مسیر
                 </a>
               ) : <span className="muted-action"><MapPin size={14} /> مسیر نامشخص</span>}
-              <button type="button" className="link-action" onClick={() => onAskInquiry(result)}>
+              <button type="button" className="link-action" disabled={!offerId} onClick={() => onAskInquiry(result)}>
                 استعلام نمونه‌سازی
               </button>
-              <button type="button" className="link-action" onClick={() => onPrepareVisit(result)}>
+              <button type="button" className="link-action" disabled={!offerId} onClick={() => onPrepareVisit(result)}>
                 کارت مراجعه
               </button>
               <button
                 type="button"
                 className={`compare-action ${isSelected ? "selected" : ""}`}
                 aria-pressed={isSelected}
+                disabled={!offerId}
                 onClick={() => onToggleCompare(result)}
               >
                 {isSelected ? "انتخاب شد" : "مقایسه"}

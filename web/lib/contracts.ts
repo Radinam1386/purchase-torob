@@ -37,9 +37,10 @@ export interface KnownValue<T> {
 }
 
 export interface Offer {
+  id?: string;
   shopId: string;
   productId: string;
-  price: number;
+  price: number | null;
   priceUnit: string;
   priceUpdatedAt?: string | null;
   warranty?: { provider?: string | null; months?: number | null } | null;
@@ -82,6 +83,7 @@ export interface Inquiry {
   id: string;
   shopId: string;
   productId: string;
+  offerId?: string | null;
   status: "sent" | "reviewing" | "answered" | "no_answer";
   answer?: { inStock: boolean; price?: number | null; note?: string | null } | null;
   simulated: true;
@@ -98,8 +100,7 @@ export type AssistantCard =
     }
   | {
       kind: "alternatives";
-      products: Product[];
-      results: ShopResult[];
+      options: { product: Product; results: ShopResult[] }[];
       source: DataSource;
     }
   | { kind: "hub"; hubs: MarketHub[]; source: "ai_knowledge" }
@@ -134,6 +135,7 @@ export interface ConversationState {
   };
   selectedProductId: string | null;
   selectedShopIds: string[];
+  selectedOfferIds: string[];
   preferences: Record<string, unknown>;
 }
 

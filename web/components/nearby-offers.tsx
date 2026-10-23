@@ -15,8 +15,6 @@ import {
 import type { Product, ShopResult } from "@/lib/contracts";
 import type { MapPoint } from "@/components/leaflet-map";
 
-type OfferSearchMode = "matched" | "relaxed" | "wider" | "empty";
-
 const LeafletMap = dynamic(() => import("@/components/leaflet-map"), {
   ssr: false,
   loading: () => <div className="offers-map-loading">در حال آماده‌سازی نقشه…</div>,
@@ -26,7 +24,6 @@ export function NearbyOffers({
   product,
   center,
   results,
-  mode,
   error,
   busy,
   onWidenRadius,
@@ -34,7 +31,7 @@ export function NearbyOffers({
   onSuggestMarket,
   onSearchWeb,
   canWidenRadius,
-  selectedShopIds,
+  selectedOfferIds,
   onToggleCompare,
   onAskInquiry,
   onPrepareVisit,
@@ -42,7 +39,6 @@ export function NearbyOffers({
   product: Product;
   center: MapPoint;
   results: ShopResult[];
-  mode: OfferSearchMode;
   error: string;
   busy: boolean;
   onWidenRadius: () => void;
@@ -50,7 +46,7 @@ export function NearbyOffers({
   onSuggestMarket: () => void;
   onSearchWeb: () => void;
   canWidenRadius: boolean;
-  selectedShopIds: string[];
+  selectedOfferIds: string[];
   onToggleCompare: (result: ShopResult) => void;
   onAskInquiry: (result: ShopResult) => void;
   onPrepareVisit: (result: ShopResult) => void;
@@ -78,13 +74,6 @@ export function NearbyOffers({
         </div>
       ) : results.length ? (
         <>
-          {mode !== "matched" && (
-            <div className="fallback-note" role="status">
-              {mode === "relaxed"
-                ? "با این فیلترها نتیجه‌ای نبود؛ این فروشگاه‌ها در همان شعاع هستند، اما با شرط بودجه، باز بودن یا قسطی شما تطبیق کامل ندارند."
-                : "در شعاع انتخابی نتیجه‌ای نبود؛ این گزینه‌ها دورترند و بیرون از محدوده‌ی فعلی قرار دارند."}
-            </div>
-          )}
           <div className="offers-map-frame">
             <LeafletMap center={center} results={results} />
           </div>
@@ -92,23 +81,32 @@ export function NearbyOffers({
           <div className="nearby-list">
             {results.slice(0, 8).map((result) => {
               const route = directionsUrl(result.shop.lat, result.shop.lng);
+              const offerId = result.offer?.id;
               return (
-                <article className="nearby-shop" key={result.shop.id}>
+                <article className="nearby-shop" key={offerId ?? `${result.shop.id}-${result.offer.productId}`}>
                   <span className="nearby-shop-mark"><Store size={16} /></span>
                   <div className="nearby-shop-main">
                     <strong>{result.shop.displayName}</strong>
+                    <span className="offer-id">
+                      {offerId ? `آفر #${offerId.slice(-6)}` : "شناسه‌ی آفر قدیمی"}
+                    </span>
                     <span className="nearby-address">{[result.shop.mall, result.shop.floor, result.shop.unit].filter(Boolean).join(" · ") || result.shop.addressText || "نشانی جزئی نامشخص"}</span>
                     <span className="nearby-meta"><MapPin size={12} /> {formatDistance(result.distanceKm)} <i /> {openLabel(result.openNow)}</span>
+                    <span className="nearby-payment">
+                      {result.shop.installment === true ? "قسطی حضوری" : result.shop.installment === null ? "قسطی حضوری: نامشخص" : "قسطی ثبت نشده"}
+                      {result.shop.expressDelivery === true ? " · ارسال فوری" : ""}
+                    </span>
                     <div className="nearby-actions">
                       <button
                         type="button"
-                        className={selectedShopIds.includes(result.shop.id) ? "selected" : ""}
+                        className={offerId && selectedOfferIds.includes(offerId) ? "selected" : ""}
+                        disabled={!offerId}
                         onClick={() => onToggleCompare(result)}
                       >
-                        {selectedShopIds.includes(result.shop.id) ? "انتخاب شد" : "مقایسه"}
+                        {offerId && selectedOfferIds.includes(offerId) ? "انتخاب شد" : "مقایسه"}
                       </button>
-                      <button type="button" onClick={() => onAskInquiry(result)}>استعلام نمونه‌سازی</button>
-                      <button type="button" onClick={() => onPrepareVisit(result)}><Route size={13} /> کارت مراجعه</button>
+                      <button type="button" disabled={!offerId} onClick={() => onAskInquiry(result)}>استعلام نمونه‌سازی</button>
+                      <button type="button" disabled={!offerId} onClick={() => onPrepareVisit(result)}><Route size={13} /> کارت مراجعه</button>
                     </div>
                   </div>
                   <div className="nearby-shop-price">
@@ -126,10 +124,10 @@ export function NearbyOffers({
         <div className="no-nearby-offers">
           <PackageSearch size={22} />
           <strong>در دیتاست آفر مکانی برای این کالا پیدا نشد.</strong>
-          <p>فروشگاه‌های ثبت‌شده در این شعاع و جستجوی گسترده‌تر هم نتیجه‌ای نداشتند؛ کالا ممکن است خارج از پوشش دیتاست باشد.</p>
+          <p>با شعاع و فیلترهای فعلی آفر مکانی ثبت‌شده‌ای پیدا نشد؛ ممکن است کالا خارج از پوشش دیتاست باشد یا فیلترها محدودکننده باشند.</p>
           <div>
-            {mode !== "empty" && canWidenRadius && <button type="button" onClick={onWidenRadius}>شعاع را بیشتر کن</button>}
-            {mode !== "empty" && <button type="button" onClick={onRelaxFilters}>فیلترهای سخت را بردار</button>}
+            {canWidenRadius && <button type="button" onClick={onWidenRadius}>شعاع را بیشتر کن</button>}
+            <button type="button" onClick={onRelaxFilters}>فیلترهای سخت را بردار</button>
             <button type="button" onClick={onSuggestMarket}>پیشنهاد مرکز بازار</button>
             <button type="button" onClick={onSearchWeb}>جستجوی تکمیلی وب</button>
           </div>

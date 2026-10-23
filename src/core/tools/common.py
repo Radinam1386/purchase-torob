@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
@@ -51,21 +51,31 @@ def product_from_row(row) -> Product:
     )
 
 
-def payment_options(raw: str | None) -> list[dict]:
-    value = parse_json(raw, default=[])
-    return value if isinstance(value, list) else []
+def payment_options(raw: str | None) -> list[dict] | None:
+    if raw is None or raw == "null":
+        return None
+    value = parse_json(raw, default=None)
+    if not isinstance(value, list):
+        return None
+    return [option for option in value if isinstance(option, dict)]
 
 
-def supports_in_person_installments(raw: str | None) -> bool:
+def supports_in_person_installments(raw: str | None) -> bool | None:
     """Only explicit in-person payment records count as in-person installments."""
-    return any(option.get("channel") == "in_person" for option in payment_options(raw))
+    options = payment_options(raw)
+    if options is None:
+        return None
+    return any(option.get("channel") == "in_person" for option in options)
 
 
-def supports_tarob_pay_in_person(raw: str | None) -> bool:
+def supports_tarob_pay_in_person(raw: str | None) -> bool | None:
+    options = payment_options(raw)
+    if options is None:
+        return None
     return any(
         option.get("channel") == "in_person"
         and "ترب پی" in normalize_fa(option.get("provider_name", ""))
-        for option in payment_options(raw)
+        for option in options
     )
 
 
@@ -120,24 +130,46 @@ def is_open_now(raw_hours: str | None) -> bool | None:
     hours = parse_json(raw_hours)
     if not isinstance(hours, dict):
         return None
+    return _is_open_at(hours, datetime.now(ZoneInfo(settings.timezone)))
 
-    now = datetime.now(ZoneInfo(settings.timezone))
+
+def _is_open_at(hours: dict, now: datetime) -> bool | None:
     weekday = now.strftime("%a").lower()
     day = hours.get(weekday)
     if not isinstance(day, dict):
         return None
+    minute_now = now.hour * 60 + now.minute
+    today_result = _is_open_during_shifts(day, minute_now)
+    if today_result is True:
+        return True
+
+    previous_day_name = (now - timedelta(days=1)).strftime("%a").lower()
+    previous_day = hours.get(previous_day_name)
+    if isinstance(previous_day, dict) and previous_day.get("status") == "declared":
+        for shift in previous_day.get("shifts", []):
+            if not isinstance(shift, dict):
+                continue
+            start = _minutes(shift.get("start_time"))
+            end = _minutes(shift.get("end_time"))
+            if start is not None and end is not None and start > end and minute_now < end:
+                return True
+    return today_result
+
+
+def _is_open_during_shifts(day: dict, minute_now: int) -> bool | None:
     if day.get("status") == "closed":
         return False
     if day.get("status") != "declared":
         return None
-
-    minute_now = now.hour * 60 + now.minute
     for shift in day.get("shifts", []):
         if not isinstance(shift, dict):
             continue
         start = _minutes(shift.get("start_time"))
         end = _minutes(shift.get("end_time"))
-        if start is not None and end is not None and start <= minute_now < end:
+        if start is not None and end is not None and (
+            (start <= end and start <= minute_now < end)
+            or (start > end and minute_now >= start)
+        ):
             return True
     return False
 
@@ -163,9 +195,10 @@ def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
         )
 
     offer = Offer(
+        id=row["offer_id"],
         shop_id=row["offer_shop_id"],
         product_id=row["product_id"],
-        price=int(row["price"]),
+        price=int(row["price"]) if row["price"] is not None else None,
         price_updated_at=row["price_updated_at"],
         warranty=warranty,
         stock="unverified",

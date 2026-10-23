@@ -17,6 +17,13 @@ export default function LeafletMap({
   center: MapPoint;
   results: ShopResult[];
 }) {
+  const resultsByShop = new Map<string, ShopResult[]>();
+  for (const result of results) {
+    const group = resultsByShop.get(result.shop.id) ?? [];
+    group.push(result);
+    resultsByShop.set(result.shop.id, group);
+  }
+
   return (
     <MapContainer
       key={`${center.lat.toFixed(4)}-${center.lng.toFixed(4)}`}
@@ -30,7 +37,8 @@ export default function LeafletMap({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {results.map((result) => {
+      {[...resultsByShop.values()].map((shopResults) => {
+        const result = shopResults[0];
         if (typeof result.shop.lat !== "number" || typeof result.shop.lng !== "number") return null;
         const directions = directionsUrl(result.shop.lat, result.shop.lng);
         return (
@@ -43,9 +51,21 @@ export default function LeafletMap({
             <Popup>
               <div className="map-popup" dir="rtl">
                 <strong>{result.shop.displayName}</strong>
-                <span>{formatPrice(result.offer.price, result.offer.priceUnit)}</span>
                 <span>{formatDistance(result.distanceKm)} · {openLabel(result.openNow)}</span>
-                <small>{stockLabel(result.offer.stock)}</small>
+                {shopResults.map((shopResult, index) => (
+                  <div
+                    className="map-popup-offer"
+                    key={shopResult.offer.id ?? `${shopResult.offer.productId}-${index}`}
+                  >
+                    <small>
+                      {shopResult.offer.id
+                        ? `آفر #${shopResult.offer.id.slice(-6)}`
+                        : "شناسه‌ی آفر قدیمی"}
+                    </small>
+                    <span>{formatPrice(shopResult.offer.price, shopResult.offer.priceUnit)}</span>
+                    <small>{stockLabel(shopResult.offer.stock)}</small>
+                  </div>
+                ))}
                 {directions && <a href={directions} target="_blank" rel="noreferrer">مسیریابی</a>}
               </div>
             </Popup>

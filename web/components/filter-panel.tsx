@@ -8,9 +8,11 @@ export interface FilterValues {
   radiusKm: number;
   openNow: boolean;
   installment: boolean;
+  express: boolean;
 }
 
 interface FilterPanelProps {
+  idPrefix: string;
   values: FilterValues;
   busy: boolean;
   hasSelectedProduct: boolean;
@@ -23,6 +25,7 @@ interface FilterPanelProps {
 const QUICK_BUDGETS = [5_000_000, 15_000_000, 30_000_000];
 
 export function FilterPanel({
+  idPrefix,
   values,
   busy,
   hasSelectedProduct,
@@ -36,6 +39,10 @@ export function FilterPanel({
   }
 
   const parsedBudget = parseToman(values.budget);
+  const locationId = `${idPrefix}-location-input`;
+  const budgetId = `${idPrefix}-budget-input`;
+  const budgetUnitId = `${idPrefix}-budget-unit`;
+  const radiusId = `${idPrefix}-radius-input`;
 
   return (
     <aside className="filter-panel" aria-label="فیلترهای جستجوی حضوری">
@@ -51,11 +58,11 @@ export function FilterPanel({
       </div>
 
       <div className="filter-field">
-        <label htmlFor="location-input">محدوده‌ی جستجو</label>
+        <label htmlFor={locationId}>محدوده‌ی جستجو</label>
         <div className="location-control">
           <MapPin size={16} />
           <input
-            id="location-input"
+            id={locationId}
             value={values.location}
             onChange={(event) => update("location", event.target.value)}
             placeholder="مثلاً ونک، تهران"
@@ -70,19 +77,19 @@ export function FilterPanel({
 
       <div className="filter-field">
         <div className="field-label-row">
-          <label htmlFor="budget-input">حداکثر بودجه</label>
+          <label htmlFor={budgetId}>حداکثر بودجه</label>
           <span className="field-note">اختیاری</span>
         </div>
         <div className="budget-control">
           <input
-            id="budget-input"
+            id={budgetId}
             inputMode="numeric"
             value={values.budget}
             onChange={(event) => update("budget", event.target.value)}
             placeholder="مثلاً ۲۰٬۰۰۰٬۰۰۰"
-            aria-describedby="budget-unit"
+            aria-describedby={budgetUnitId}
           />
-          <span id="budget-unit">تومان</span>
+          <span id={budgetUnitId}>تومان</span>
         </div>
         <div className="quick-budgets" aria-label="بودجه‌های پیشنهادی">
           {QUICK_BUDGETS.map((budget) => (
@@ -100,11 +107,11 @@ export function FilterPanel({
 
       <div className="filter-field radius-field">
         <div className="field-label-row">
-          <label htmlFor="radius-input">شعاع جستجو</label>
-          <output htmlFor="radius-input">{formatNumber(values.radiusKm)} کیلومتر</output>
+          <label htmlFor={radiusId}>شعاع جستجو</label>
+          <output htmlFor={radiusId}>{formatNumber(values.radiusKm)} کیلومتر</output>
         </div>
         <input
-          id="radius-input"
+          id={radiusId}
           type="range"
           min="1"
           max="20"
@@ -130,6 +137,12 @@ export function FilterPanel({
           description="فقط با مدرک پرداخت حضوری"
           checked={values.installment}
           onChange={(checked) => update("installment", checked)}
+        />
+        <ToggleRow
+          title="ارسال فوری"
+          description="فروشگاه‌های دارای این امکان"
+          checked={values.express}
+          onChange={(checked) => update("express", checked)}
         />
       </div>
 

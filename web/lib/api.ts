@@ -15,6 +15,7 @@ export async function* streamChat(
 ): AsyncGenerator<StreamEvent> {
   const response = await fetch(`${API_ROOT}/api/chat/stream`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
     signal,
@@ -84,6 +85,7 @@ export async function searchOffers(input: {
   radius: number;
   maxPrice: number | null;
   installment: boolean;
+  express: boolean;
   openNow: boolean;
 }, signal?: AbortSignal): Promise<ShopResult[]> {
   const response = await fetch(`${API_ROOT}/api/offers`, {
@@ -96,6 +98,7 @@ export async function searchOffers(input: {
       radius: input.radius,
       maxPrice: input.maxPrice,
       installment: input.installment,
+      express: input.express,
       openNow: input.openNow,
     }),
     signal,
