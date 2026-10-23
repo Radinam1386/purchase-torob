@@ -66,6 +66,43 @@ class AcceptanceBackendTests(unittest.TestCase):
             self.assertTrue(all(p['minPrice'] is None for p in data['data'][2:]))
         self.assertEqual(self.client.get('/api/products',params={'min_price':60,'max_price':40}).status_code,422)
 
+    def test_scoped_catalog_does_not_scan_unrelated_offers_on_legacy_sqlite(self):
+        import src.api as api
+        from src.core.database import database
+        from src.core.tools.common import haversine_km
+        with database() as connection:
+            connection.execute('INSERT INTO products VALUES (?,?,?,?,?,?,?,?,?)',
+                ('unrelated','دوربین','دوربین',None,None,'دوربین','دوربین','[]','[]'))
+            connection.execute('INSERT INTO product_fts(product_id,title,brand,category) VALUES (?,?,?,?)',
+                ('unrelated','دوربین','','دوربین'))
+            connection.executemany('INSERT INTO offers VALUES (?,?,?,?,?,?,?)',
+                [(f'unrelated-{n}','s0','unrelated',50,None,None,None) for n in range(2000)])
+        original_scope=api._eligible_offer_scope
+        parameters={'q':'هدفون','max_price':60,'lat':35.7,'lng':51.4,'radius_km':1}
+
+        def measure(force_materialized=False):
+            def scope_builder(*args, **kwargs):
+                scope, values=original_scope(*args, **kwargs)
+                if force_materialized:
+                    scope=scope.replace(' AS NOT MATERIALIZED (',' AS MATERIALIZED (',1)
+                # SQLite 3.40 materializes a multiply-referenced CTE by default.
+                # Reproduce that planner choice on newer development SQLite too.
+                if ' AS NOT MATERIALIZED (' not in scope and ' AS MATERIALIZED (' not in scope:
+                    scope=scope.replace(' AS (',' AS MATERIALIZED (',1)
+                return scope, values
+            with patch('src.api._eligible_offer_scope',side_effect=scope_builder), \
+                 patch('src.core.tools.common.haversine_km',wraps=haversine_km) as distance:
+                response=self.client.get('/api/products',params=parameters)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['total'],2)
+            return distance.call_count,response.json()
+
+        checks,result=measure()
+        self.assertLess(checks,100,'A product-scoped request must not evaluate geographic filters for unrelated offers')
+        materialized_checks,materialized_result=measure(force_materialized=True)
+        self.assertGreaterEqual(materialized_checks,2000)
+        self.assertEqual(result,materialized_result)
+
     def test_agent_tool_and_results_page_share_the_exact_query_predicate(self):
         from src.core.tools.catalog import search_products
         for query in ['هدفون', 'هدفون روگوشی', 'هدفون موسیقی']:

@@ -284,7 +284,8 @@ def _eligible_offer_scope(connection, *, min_price=None, max_price=None, lat=Non
     if open_now:
         connection.create_function("torob_open_now", 1, lambda raw: is_open_now(raw) is True)
         clauses.append("torob_open_now(s.weekly_hours)=1")
-    return ("WITH eligible_offers AS (SELECT o.* FROM offers o JOIN shops s ON s.id=o.shop_id WHERE "
+    # Keep product_id predicates indexable on SQLite versions that materialize reused CTEs.
+    return ("WITH eligible_offers AS NOT MATERIALIZED (SELECT o.* FROM offers o JOIN shops s ON s.id=o.shop_id WHERE "
             + " AND ".join(clauses) + ") ", params)
 
 
