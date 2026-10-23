@@ -125,6 +125,8 @@ export function ShoppingWorkspace() {
   const mobileFilterClose = useRef<HTMLButtonElement>(null);
   const activeChatRequest = useRef<AbortController | null>(null);
   const chatGeneration = useRef(0);
+  const initialized = useRef(false);
+  const initialMessage = useRef<string | null>(null);
 
   const selectedProductId = conversation.selectedProductId;
   const selectedOfferIds = conversation.selectedOfferIds ?? [];
@@ -134,8 +136,22 @@ export function ShoppingWorkspace() {
   }, [activeTools]);
 
   useEffect(() => {
-    const initialQuery = new URLSearchParams(window.location.search).get("q");
-    if (initialQuery) setDraft(initialQuery);
+    if (initialized.current) return;
+    initialized.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const initialQuery = params.get("q")?.trim();
+    if (params.get("new") === "1" || initialQuery) {
+      initialMessage.current = initialQuery || null;
+      setUserId(`web-${window.crypto.randomUUID()}`);
+      try {
+        window.localStorage.removeItem("torob-last-results-url");
+        window.localStorage.removeItem("torob-product-compare.v1");
+      } catch { /* A fresh chat does not depend on saved search state. */ }
+      // Consume the entry command so refresh resumes instead of sending twice.
+      window.history.replaceState(null, "", window.location.pathname);
+      setReady(true);
+      return;
+    }
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -183,6 +199,13 @@ export function ShoppingWorkspace() {
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
   }, [conversation, filters, history, marketplaceProduct, marketplaceResults, messages, ready, userId]);
+
+  useEffect(() => {
+    if (!ready || !initialMessage.current) return;
+    const message = initialMessage.current;
+    initialMessage.current = null;
+    void submitMessage(message);
+  }, [ready]);
 
   useEffect(() => {
     if (!mobileFiltersOpen) return;
@@ -764,6 +787,7 @@ export function ShoppingWorkspace() {
     window.localStorage.removeItem("torob-last-results-url");
     window.localStorage.removeItem("torob-product-compare.v1");
     setConversation((current) => ({ ...INITIAL_CONVERSATION, location: current.location, radiusKm: current.radiusKm }));
+    setFilters((current) => ({ ...current, budget: "", openNow: false, installment: false, express: false }));
     composer.current?.focus();
   }
 

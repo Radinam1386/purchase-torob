@@ -23,6 +23,20 @@ from src.core.agent import ShoppingAgent
 
 
 class PurchaseRegressionTests(unittest.TestCase):
+    def test_model_json_after_intro_is_not_exposed_in_chat(self):
+        from src.core.response import response_from_messages
+        from langchain_core.messages import AIMessage
+        question = "چه نوع جاروبرقی و چه بودجه‌ای مدنظرت است؟"
+        payload = json.dumps({'text': question, 'clarificationQuestion': question}, ensure_ascii=False)
+        response = response_from_messages([AIMessage(content=question + '\n' + payload)])
+        self.assertEqual(response.text, question)
+        self.assertEqual(response.clarification_question, question)
+
+    def test_plain_and_fenced_model_responses_remain_readable(self):
+        from src.core.response import parse_model_text
+        self.assertEqual(parse_model_text('سلام، چه محصولی می‌خواهی؟'), ('سلام، چه محصولی می‌خواهی؟', None))
+        self.assertEqual(parse_model_text('```json\n{"text":"سلام","clarificationQuestion":"بودجه؟"}\n```'), ('سلام', 'بودجه؟'))
+
     def test_advisor_collects_budget_after_usage_answer(self) -> None:
         initial = ShoppingAgent._advisor_gate({
             "messages": [HumanMessage(content="هدفون می‌خوام")], "conversation": {},

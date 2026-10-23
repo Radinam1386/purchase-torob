@@ -58,7 +58,7 @@ def response_from_messages(messages: list[AnyMessage]) -> AssistantResponse:
         raise RuntimeError("مدل پاسخ نهایی تولید نکرد.")
 
     text, question = parse_model_text(message_text(final_message))
-    if question:
+    if question and question not in text:
         text = f"{text}\n\n{question}"
     search_args = next((call.get("args", {})
                         for message in reversed(messages) if isinstance(message, AIMessage)
@@ -84,14 +84,22 @@ def parse_model_text(raw: str) -> tuple[str, str | None]:
         cleaned = cleaned[3:]
     if cleaned.endswith("```"):
         cleaned = cleaned[:-3]
-    try:
-        payload = json.loads(cleaned.strip())
-        if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
-            raise ValueError("پاسخ مدل فاقد فیلد text معتبر است")
-        question = payload.get("clarificationQuestion", payload.get("clarification_question"))
-        return payload["text"], question if isinstance(question, str) else None
-    except (ValueError, json.JSONDecodeError):
-        return raw or "در پردازش پاسخ مشکلی پیش آمد؛ دوباره تلاش کنید.", None
+    # Some gateways prepend prose to their structured answer.
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(cleaned):
+        if character != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(cleaned[offset:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("text"), str):
+            question = payload.get("clarificationQuestion", payload.get("clarification_question"))
+            return payload["text"].strip(), question.strip() if isinstance(question, str) else None
+    fallback = "در پردازش پاسخ مشکلی پیش آمد؛ دوباره تلاش کنید."
+    if cleaned.lstrip().startswith("{") or '"clarificationQuestion"' in cleaned:
+        return fallback, None
+    return raw or fallback, None
 
 
 def message_text(message: AIMessage) -> str:
