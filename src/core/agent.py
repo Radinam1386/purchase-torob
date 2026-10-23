@@ -290,18 +290,22 @@ def _clarification_for(text: str) -> str:
 
 def _apply_constraints(state: ConversationState, text: str) -> None:
     budget_match = re.search(
-        r"(?:بودجه|حداکثر|تا سقف|تا)\s*([\d۰-۹٠-٩,٬]+)\s*(میلیارد|میلیون|هزار)?",
-        text,
+        r"(?:بودجه(?:\s*(?:من|ام|م))?|حداکثر|تا سقف|تا)\s*(?:حدود\s*)?([\d۰-۹٠-٩][\d۰-۹٠-٩.,٬]*)\s*(میلیارد|میلیون|هزار|م)?",
+        normalize_fa(text),
     )
     if budget_match:
-        amount_text = normalize_fa(budget_match.group(1)).replace(",", "").replace("٬", "")
-        amount = int(amount_text)
-        factor = {"میلیارد": 1_000_000_000, "میلیون": 1_000_000, "هزار": 1_000}.get(
-            budget_match.group(2), 1
-        )
-        state.budget = amount * factor
+        amount_text = budget_match.group(1).replace(",", "").replace("٬", "")
+        try:
+            amount = float(amount_text)
+            factor = {"میلیارد": 1_000_000_000, "میلیون": 1_000_000, "هزار": 1_000, "م": 1_000_000}.get(
+                budget_match.group(2), 1
+            )
+            state.budget = int(amount * factor)
+        except ValueError:
+            logger.info("Ignoring unparseable budget value: %r", amount_text)
 
-    radius_match = re.search(r"(?:شعاع|محدوده)\s*([\d۰-۹٠-٩.]+)", text)
+    normalized_text = normalize_fa(text).replace("٫", ".")
+    radius_match = re.search(r"(?:شعاع|محدوده)\s*([\d.]+)", normalized_text)
     if radius_match:
         state.radius_km = float(normalize_fa(radius_match.group(1)))
 

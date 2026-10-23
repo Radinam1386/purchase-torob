@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 
 from src.core.config import settings
 from src.core.database import database
-from src.core.text import normalize_fa
+from src.core.text import normalize_fa, parse_json
 from src.core.tools.common import market_hub_from_row, tool_result
 from src.core.tools.schemas import HubInput, LocationInput, QuickLookInput, WebSearchInput
 
@@ -51,30 +51,48 @@ def product_quick_look(product_id: str) -> dict:
     """خلاصه‌ی هوش مصنوعی و نکات خرید حضوری، بدون جعل نظر کاربران."""
     with database(readonly=True) as connection:
         product = connection.execute(
-            "SELECT title, brand, category FROM products WHERE id = ?", (product_id,)
+            "SELECT title, brand, category, specs FROM products WHERE id = ?", (product_id,)
         ).fetchone()
     if product is None:
         raise ValueError("محصول پیدا نشد")
 
+    raw_specs = parse_json(product["specs"], default=[])
+    specs = [
+        (str(item["key"]).strip(), str(item["value"]).strip())
+        for item in raw_specs
+        if isinstance(item, dict) and item.get("key") and item.get("value")
+    ] if isinstance(raw_specs, list) else []
+    strengths = [f"{key}: {value}" for key, value in specs[:3]]
+    if not strengths:
+        strengths = ["مشخصات فنی قابل استفاده‌ای برای این مدل ثبت نشده است."]
+
+    category = normalize_fa(product["category"])
+    checks = _in_person_checks(category)
     card = {
         "kind": "quick_look",
         "product_id": product_id,
         "label": "خلاصه هوش مصنوعی",
-        "strengths": [
-            f"دسته: {product['category'] or 'نامشخص'}",
-            f"برند: {product['brand'] or 'نامشخص'}",
-        ],
+        "strengths": strengths,
         "weaknesses": [
-            "اطلاعات نظر کاربران در دیتاست وجود ندارد؛ این بخش ارزیابی مستقل کالا نیست."
+            "دیتاست نظر کاربران و آزمون مستقل ندارد؛ تناسب کالا را فقط با مشخصات ثبت‌شده بسنج.",
+            *([f"این مشخصات در دیتاست ثبت نشده: {', '.join(key for key, _ in specs[3:6])}."] if len(specs) > 3 else []),
         ],
-        "in_person_checks": [
-            "اصالت و تطابق مدل روی جعبه را بررسی کنید",
-            "شرایط بازگشت و ضمانت را حضوری بپرسید",
-            "قیمت نهایی را پیش از پرداخت تأیید کنید",
-        ],
+        "in_person_checks": checks,
         "source": "ai_knowledge",
     }
     return tool_result("ai_knowledge", card)
+
+
+def _in_person_checks(category: str) -> list[str]:
+    if "گوشی موبایل" in category:
+        return ["مدل و IMEI را با جعبه و فاکتور تطبیق بده", "وضعیت فعال‌سازی و ضمانت را پیش از پرداخت بررسی کن"]
+    if any(term in category for term in ("لپ تاپ", "لپ‌تاپ", "کامپیوتر", "مانیتور", "نمایشگر")):
+        return ["دستگاه را روشن کن و نمایشگر، درگاه‌ها و شماره‌سریال را بررسی کن", "مدل دقیق و شرایط ضمانت را با فاکتور تطبیق بده"]
+    if any(term in category for term in ("کفش", "کتونی")):
+        return ["هر دو لنگه را با جوراب معمولت امتحان کن", "شرایط تعویض سایز را پیش از پرداخت بپرس"]
+    if any(term in category for term in ("ابزار", "دریل", "فرز")):
+        return ["عملکرد دستگاه و متعلقات داخل جعبه را بررسی کن", "مدل، شماره‌سریال و ضمانت را با فاکتور تطبیق بده"]
+    return ["مدل و متعلقات را با مشخصات آگهی تطبیق بده", "شرایط ضمانت و بازگشت را پیش از پرداخت بپرس"]
 
 
 @tool(args_schema=WebSearchInput)

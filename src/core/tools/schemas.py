@@ -37,6 +37,14 @@ class ShopInput(ToolInput):
     shop_id: str
 
 
+class VisitGuideInput(ToolInput):
+    shop_id: str
+    product_id: str | None = None
+    backup_shop_id: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+
+
 class InquiryInput(ToolInput):
     shop_id: str
     product_id: str
@@ -49,6 +57,9 @@ class AlternativesInput(ToolInput):
     lat: float | None = None
     lng: float | None = None
     radius: float = Field(default=4, ge=0, le=100)
+    installment: bool = False
+    express: bool = False
+    open_now: bool = False
 
 
 class HubInput(ToolInput):

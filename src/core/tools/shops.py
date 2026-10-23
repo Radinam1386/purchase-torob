@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from src.core.tools.schemas import (
     GetOffersInput,
     InquiryInput,
     ShopInput,
+    VisitGuideInput,
 )
 
 
@@ -114,28 +116,49 @@ def check_open_now(shop_id: str) -> dict:
 
 @tool(args_schema=InquiryInput)
 def inquire_shop(shop_id: str, product_id: str) -> dict:
-    """ثبت استعلام شبیه‌سازی‌شده؛ هیچ تماس یا پیام واقعی ارسال نمی‌شود."""
+    """ساخت پاسخ قطعی و شفافِ نمونه‌سازی؛ هیچ پیام واقعی ارسال نمی‌شود."""
     inquiry_id = str(uuid.uuid4())
-    inquiry = {
-        "id": inquiry_id,
-        "shop_id": shop_id,
-        "product_id": product_id,
-        "status": "sent",
-        "simulated": True,
-    }
     with database() as connection:
-        exists = connection.execute(
-            "SELECT 1 FROM offers WHERE shop_id = ? AND product_id = ? LIMIT 1",
+        offer = connection.execute(
+            "SELECT price FROM offers "
+            "WHERE shop_id = ? AND product_id = ? AND price > 0 LIMIT 1",
             (shop_id, product_id),
         ).fetchone()
-        if exists is None:
+        if offer is None:
             raise ValueError("برای این فروشگاه و محصول آفر ثبت نشده است")
+        digest = hashlib.sha256(f"{shop_id}:{product_id}".encode()).hexdigest()
+        outcome = int(digest[:8], 16) % 4
+        if outcome == 3:
+            status, answer = "no_answer", None
+        else:
+            in_stock = outcome in {0, 2}
+            changed_price = outcome == 2
+            status = "answered"
+            answer = {
+                "in_stock": in_stock,
+                "price": (
+                    round(int(offer["price"]) * 1.05)
+                    if changed_price else int(offer["price"])
+                ),
+                "note": (
+                    "قیمت در پاسخ نمونه‌سازی‌شده ۵٪ بیشتر از قیمت ثبت‌شده است."
+                    if changed_price else "پاسخ موجودی و قیمت، صرفاً نمونه‌سازی‌شده است."
+                ),
+            }
+        inquiry = {
+            "id": inquiry_id,
+            "shop_id": shop_id,
+            "product_id": product_id,
+            "status": status,
+            "answer": answer,
+            "simulated": True,
+        }
         connection.execute(
             "INSERT INTO inquiries VALUES (?, ?, ?, ?, ?, ?)",
             (
-                inquiry_id, shop_id, product_id, "sent",
+                inquiry_id, shop_id, product_id, status,
                 json.dumps(inquiry, ensure_ascii=False),
-                    datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat(),
             ),
         )
     return tool_result("simulated", inquiry)
@@ -149,6 +172,9 @@ def find_alternatives(
     lat: float | None = None,
     lng: float | None = None,
     radius: float = 4,
+    installment: bool = False,
+    express: bool = False,
+    open_now: bool = False,
 ) -> dict:
     """پیشنهاد مدل‌های هم‌دسته که آفر واقعی در شعاع کاربر دارند."""
     center_lat = lat if lat is not None else settings.default_lat
@@ -177,7 +203,11 @@ def find_alternatives(
             lng=center_lng,
             radius=radius,
             max_price=max_price,
+            installment=installment,
+            express=express,
+            open_now=open_now,
         )
+        offers = [result for result in offers if not shop_id or result.shop.id != shop_id]
         results.extend(offers[:2])
         if len(results) >= 20:
             break
@@ -187,9 +217,15 @@ def find_alternatives(
     return tool_result("dataset", {"products": products, "results": results[:20]})
 
 
-@tool(args_schema=ShopInput)
-def get_shop_location_hint(shop_id: str) -> dict:
-    """نمایش پاساژ، طبقه، واحد و آدرس ثبت‌شده‌ی فروشگاه."""
+@tool(args_schema=VisitGuideInput)
+def get_shop_location_hint(
+    shop_id: str,
+    product_id: str | None = None,
+    backup_shop_id: str | None = None,
+    lat: float | None = None,
+    lng: float | None = None,
+) -> dict:
+    """ساخت کارت مراجعه با جزئیات فروشگاه، آفر، استعلام و گزینه‌ی پشتیبان."""
     with database(readonly=True) as connection:
         row = connection.execute(
             "SELECT * FROM shops WHERE id = ?", (shop_id,)
@@ -206,7 +242,40 @@ def get_shop_location_hint(shop_id: str) -> dict:
         f"واحد: {shop.unit or 'نامشخص'}",
         shop.address_text or "آدرس: نامشخص",
     ]
-    return tool_result("dataset", {"shop": shop, "directions": directions})
+    center_lat = lat if lat is not None else settings.default_lat
+    center_lng = lng if lng is not None else settings.default_lng
+    result = None
+    inquiry = None
+    backup = None
+    if product_id:
+        result = next((item for item in _find_offers(
+            product_id=product_id, lat=center_lat, lng=center_lng, radius=100
+        ) if item.shop.id == shop_id), None)
+        with database(readonly=True) as connection:
+            inquiry_row = connection.execute(
+                "SELECT payload_json FROM inquiries WHERE shop_id=? AND product_id=? ORDER BY created_at DESC LIMIT 1",
+                (shop_id, product_id),
+            ).fetchone()
+        if inquiry_row:
+            inquiry = json.loads(inquiry_row["payload_json"])
+        backups = _find_offers(
+            product_id=product_id,
+            lat=center_lat,
+            lng=center_lng,
+            radius=100,
+        )
+        if backup_shop_id:
+            backup = next(
+                (item for item in backups if item.shop.id == backup_shop_id), None
+            )
+        else:
+            backup = next(
+                (item for item in backups if item.shop.id != shop_id), None
+            )
+    return tool_result(
+        "dataset",
+        {"shop": shop, "directions": directions, "offer": result, "inquiry": inquiry, "backup": backup},
+    )
 
 
 def _offer_query(extra_condition: str = "") -> str:

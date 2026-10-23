@@ -184,7 +184,7 @@ export function ShoppingWorkspace() {
 
     let nextConversation: ConversationState = {
       ...(conversationOverride ?? conversation),
-      budget: parseToman(filters.budget),
+      budget: filters.budget.trim() ? parseToman(filters.budget) : (conversationOverride ?? conversation).budget,
       radiusKm: filters.radiusKm,
       filters: {
         ...(conversationOverride ?? conversation).filters,
@@ -272,12 +272,21 @@ export function ShoppingWorkspace() {
         }));
       }
       if (event.type === "conversation" && event.conversation) {
-        setConversation({
+        const updatedConversation = {
           ...event.conversation,
           location: event.conversation.location
             ? { ...event.conversation.location, label: filters.location || event.conversation.location.label }
             : null,
-        });
+        };
+        setConversation(updatedConversation);
+        setFilters((current) => ({
+          ...current,
+          location: updatedConversation.location?.label ?? current.location,
+          budget: updatedConversation.budget ? formatNumber(updatedConversation.budget) : current.budget,
+          radiusKm: updatedConversation.radiusKm,
+          openNow: Boolean(updatedConversation.filters.openNow),
+          installment: Boolean(updatedConversation.filters.installment),
+        }));
       }
       if (event.type === "error") {
         const messageText = event.message ?? "پاسخ‌گویی با مشکل روبه‌رو شد.";
@@ -315,7 +324,7 @@ export function ShoppingWorkspace() {
       ...currentState,
       selectedProductId: product.id,
       selectedShopIds: [],
-      budget: parseToman(nextFilters.budget),
+      budget: nextFilters.budget.trim() ? parseToman(nextFilters.budget) : currentState.budget,
       radiusKm: nextFilters.radiusKm,
       filters: {
         ...currentState.filters,
@@ -341,7 +350,7 @@ export function ShoppingWorkspace() {
         productId: product.id,
         location: { lat: point.lat, lng: point.lng },
         radius: nextFilters.radiusKm,
-        maxPrice: parseToman(nextFilters.budget),
+        maxPrice: nextConversation.budget,
         installment: nextFilters.installment,
         openNow: nextFilters.openNow,
       };
@@ -397,7 +406,29 @@ export function ShoppingWorkspace() {
     );
   }
 
+  function handlePrepareVisit(result: ShopResult) {
+    const next = {
+      ...conversation,
+      selectedProductId: result.offer.productId,
+      selectedShopIds: [result.shop.id],
+    };
+    setConversation(next);
+    void submitMessage(
+      `برای محصول ${result.offer.productId} در فروشگاه ${result.shop.id} کارت نهایی مراجعه را با قیمت، تاریخ قیمت، ساعت کاری، آدرس پاساژ، آخرین استعلام نمونه‌سازی و یک فروشگاه پشتیبان بساز.`,
+      next,
+    );
+  }
+
   function handleToggleCompare(result: ShopResult) {
+    if (conversation.selectedProductId && conversation.selectedProductId !== result.offer.productId) {
+      setNotice("برای مقایسه، فروشگاه‌های یک محصول را انتخاب کن؛ انتخاب قبلی پاک شد.");
+      setConversation((current) => ({
+        ...current,
+        selectedProductId: result.offer.productId,
+        selectedShopIds: [result.shop.id],
+      }));
+      return;
+    }
     const isSelected = selectedShopIds.includes(result.shop.id);
     const nextIds = isSelected
       ? selectedShopIds.filter((id) => id !== result.shop.id)
@@ -439,7 +470,7 @@ export function ShoppingWorkspace() {
     if (!marketplaceProduct || offersBusy) return;
     const nextFilters = { ...filters, budget: "", openNow: false, installment: false };
     setFilters(nextFilters);
-    void searchForProduct(marketplaceProduct, nextFilters, conversation);
+    void searchForProduct(marketplaceProduct, nextFilters, { ...conversation, budget: null });
   }
 
   function handleSuggestMarket() {
@@ -577,6 +608,7 @@ export function ShoppingWorkspace() {
                             onChooseProduct={handleChooseProduct}
                             onAskInquiry={handleAskInquiry}
                             onToggleCompare={handleToggleCompare}
+                            onPrepareVisit={handlePrepareVisit}
                           />
                         )}
                       </div>
@@ -607,6 +639,7 @@ export function ShoppingWorkspace() {
                   selectedShopIds={selectedShopIds}
                   onToggleCompare={handleToggleCompare}
                   onAskInquiry={handleAskInquiry}
+                  onPrepareVisit={handlePrepareVisit}
                 />
               )}
             </div>

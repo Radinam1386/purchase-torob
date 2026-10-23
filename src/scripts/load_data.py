@@ -72,6 +72,7 @@ def load_data() -> dict:
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(SCHEMA)
+        _preserve_user_data(connection, settings.database_path)
         _seed_market_hubs(connection)
         products = _load_products(connection, source_dir / "products.csv")
         shops = _load_shops(connection, source_dir / "shops.csv")
@@ -87,6 +88,31 @@ def load_data() -> dict:
     report_path = settings.database_path.parent / "quality-report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+def _preserve_user_data(connection: sqlite3.Connection, database_path: Path) -> None:
+    """Carry application-owned records into the replacement dataset database."""
+    if not database_path.exists():
+        return
+
+    connection.execute("ATTACH DATABASE ? AS previous_database", (str(database_path),))
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM previous_database.sqlite_master WHERE type='table'"
+        )
+    }
+    if "user_preferences" in tables:
+        connection.execute(
+            "INSERT OR REPLACE INTO user_preferences(user_id, preferences_json, updated_at) "
+            "SELECT user_id, preferences_json, updated_at FROM previous_database.user_preferences"
+        )
+    if "inquiries" in tables:
+        connection.execute(
+            "INSERT OR REPLACE INTO inquiries(id, shop_id, product_id, status, payload_json, created_at) "
+            "SELECT id, shop_id, product_id, status, payload_json, created_at "
+            "FROM previous_database.inquiries"
+        )
 
 
 def _seed_market_hubs(connection: sqlite3.Connection) -> None:

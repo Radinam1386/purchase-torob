@@ -50,11 +50,16 @@ export function directionsUrl(lat?: number | null, lng?: number | null): string 
 }
 
 export function parseToman(value: string): number | null {
-  const latin = value
+  const normalized = value.trim().toLowerCase()
+    .replace(/میلیارد|میلیون|تومان|هزار/g, (unit) => ` ${unit} `)
     .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
     .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
-  const digits = latin.replace(/[^0-9]/g, "");
-  return digits ? Number(digits) : null;
+  const match = normalized.match(/([0-9][0-9,٬.]*)\s*(میلیارد|میلیون|هزار)?/);
+  if (!match) return null;
+  const amount = Number(match[1].replace(/[٬,]/g, ""));
+  if (!Number.isFinite(amount)) return null;
+  const multiplier = { میلیارد: 1_000_000_000, میلیون: 1_000_000, هزار: 1_000 }[match[2] ?? ""] ?? 1;
+  return Math.round(amount * multiplier);
 }
 
 export function formatBudgetInput(value: number | null): string {

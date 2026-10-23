@@ -78,19 +78,22 @@ export interface AssistantResponse {
   clarificationQuestion?: string | null;
 }
 
+export interface Inquiry {
+  id: string;
+  shopId: string;
+  productId: string;
+  status: "sent" | "reviewing" | "answered" | "no_answer";
+  answer?: { inStock: boolean; price?: number | null; note?: string | null } | null;
+  simulated: true;
+}
+
 export type AssistantCard =
   | { kind: "product_cards"; products: Product[]; source: DataSource }
   | { kind: "shop_cards"; results: ShopResult[]; source: DataSource }
   | { kind: "compare"; results: ShopResult[]; source: DataSource }
   | {
       kind: "inquiry";
-      inquiry: {
-        id: string;
-        shopId: string;
-        productId: string;
-        status: "sent" | "reviewing" | "answered" | "no_answer";
-        simulated: true;
-      };
+      inquiry: Inquiry;
       source: "simulated";
     }
   | {
@@ -109,7 +112,15 @@ export type AssistantCard =
       inPersonChecks: string[];
       source: "ai_knowledge";
     }
-  | { kind: "mall_guide"; shop: Shop; directions: string[]; source: "dataset" }
+  | {
+      kind: "mall_guide";
+      shop: Shop;
+      directions: string[];
+      offer?: ShopResult | null;
+      inquiry?: Inquiry | null;
+      backup?: ShopResult | null;
+      source: "dataset";
+    }
   | { kind: "web_results"; results: WebResult[]; source: "web" };
 
 export interface ConversationState {

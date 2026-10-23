@@ -160,6 +160,9 @@ class MallGuideCard(ContractModel):
     kind: Literal["mall_guide"]
     shop: Shop
     directions: list[str]
+    offer: ShopResult | None = None
+    inquiry: Inquiry | None = None
+    backup: ShopResult | None = None
     source: Literal["dataset"] = "dataset"
 
 

@@ -155,6 +155,9 @@ def card_data_for_tool(name: str, data: Any, source: str) -> dict[str, Any] | No
             "kind": "mall_guide",
             "shop": data.get("shop"),
             "directions": data.get("directions", []),
+            "offer": data.get("offer"),
+            "inquiry": data.get("inquiry"),
+            "backup": data.get("backup"),
             "source": "dataset",
         }
     if name == "web_search":

@@ -31,6 +31,7 @@ interface CardActions {
   onChooseProduct: (product: Product) => void;
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
+  onPrepareVisit: (result: ShopResult) => void;
 }
 
 interface ResponseCardsProps extends CardActions {
@@ -43,6 +44,7 @@ export function ResponseCards({
   onChooseProduct,
   onAskInquiry,
   onToggleCompare,
+  onPrepareVisit,
 }: ResponseCardsProps) {
   if (!cards.length) return null;
 
@@ -56,6 +58,7 @@ export function ResponseCards({
           onChooseProduct={onChooseProduct}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
+          onPrepareVisit={onPrepareVisit}
         />
       ))}
     </div>
@@ -72,6 +75,7 @@ function CardRenderer({
   onChooseProduct,
   onAskInquiry,
   onToggleCompare,
+  onPrepareVisit,
 }: CardRendererProps) {
   switch (card.kind) {
     case "product_cards":
@@ -95,6 +99,7 @@ function CardRenderer({
           selectedShopIds={selectedShopIds}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
+          onPrepareVisit={onPrepareVisit}
         />
       );
 
@@ -107,6 +112,7 @@ function CardRenderer({
           selectedShopIds={selectedShopIds}
           onAskInquiry={onAskInquiry}
           onToggleCompare={onToggleCompare}
+          onPrepareVisit={onPrepareVisit}
         />
       );
 
@@ -126,6 +132,7 @@ function CardRenderer({
               selectedShopIds={selectedShopIds}
               onAskInquiry={onAskInquiry}
               onToggleCompare={onToggleCompare}
+              onPrepareVisit={onPrepareVisit}
             />
           )}
           {!card.products.length && !card.results.length && (
@@ -134,17 +141,28 @@ function CardRenderer({
         </CardShell>
       );
 
-    case "inquiry":
+    case "inquiry": {
+      const inquiry = card.inquiry;
+      const inquiryTitle = inquiry.status === "no_answer"
+        ? "در نمونه‌سازی پاسخی دریافت نشد"
+        : inquiry.answer?.inStock
+          ? "پاسخ نمونه‌سازی: موجود"
+          : "پاسخ نمونه‌سازی: ناموجود";
       return (
         <div className="inquiry-card" role="status">
           <span className="inquiry-icon"><BadgeCheck size={18} /></span>
           <div>
-            <strong>استعلام نمونه‌سازی شد</strong>
-            <p>هیچ تماس یا پیامی ارسال نشده؛ موجودی و قیمت هنوز تأیید نشده‌اند.</p>
+            <strong>{inquiryTitle}</strong>
+            <p>
+              {inquiry.status === "no_answer"
+                ? "این پاسخ شبیه‌سازی‌شده است و تماس واقعی انجام نشده."
+                : `${inquiry.answer?.note ?? "پاسخ فقط نمونه‌سازی‌شده است؛ با فروشنده تأیید نشده."}${inquiry.answer?.price ? ` قیمت نمونه: ${formatPrice(inquiry.answer.price)}.` : ""} تماس واقعی انجام نشده.`}
+            </p>
           </div>
           <SourceTag source="simulated" />
         </div>
       );
+    }
 
     case "hub":
       return (
@@ -194,9 +212,27 @@ function CardRenderer({
 
     case "mall_guide":
       return (
-        <CardShell icon={<Route size={17} />} title="راهنمای داخل پاساژ" source="dataset">
+        <CardShell icon={<Route size={17} />} title="کارت مراجعه" source="dataset">
           <strong className="mall-shop-name">{card.shop.displayName}</strong>
           <ul className="directions-list">{card.directions.map((item) => <li key={item}>{item}</li>)}</ul>
+          {card.offer && (
+            <div className="visit-offer-summary">
+              <span>قیمت ثبت‌شده: {formatPrice(card.offer.offer.price)}</span>
+              <span>آخرین تغییر قیمت: {formatDate(card.offer.offer.priceUpdatedAt)}</span>
+              <span>{openLabel(card.offer.openNow)} · {stockLabel(card.offer.offer.stock)}</span>
+            </div>
+          )}
+          {card.inquiry && (
+            <p className="quiet-note">
+              استعلام نمونه‌سازی: {card.inquiry.status === "no_answer" ? "بی‌پاسخ" : card.inquiry.answer?.inStock ? "پاسخ موجود" : "پاسخ ناموجود"}؛ تماس واقعی انجام نشده.
+            </p>
+          )}
+          {card.backup && (
+            <div className="visit-backup">
+              <strong>پشتیبان: {card.backup.shop.displayName}</strong>
+              <span>{formatPrice(card.backup.offer.price)} · {formatDistance(card.backup.distanceKm)} · {stockLabel(card.backup.offer.stock)}</span>
+            </div>
+          )}
           {directionsUrl(card.shop.lat, card.shop.lng) && (
             <a className="text-link" href={directionsUrl(card.shop.lat, card.shop.lng) ?? "#"} target="_blank" rel="noreferrer">
               مسیر تا پاساژ <ArrowUpLeft size={15} />
@@ -271,6 +307,7 @@ function ShopResultsCard({
   selectedShopIds,
   onAskInquiry,
   onToggleCompare,
+  onPrepareVisit,
 }: {
   title: string;
   results: ShopResult[];
@@ -278,6 +315,7 @@ function ShopResultsCard({
   selectedShopIds: string[];
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
+  onPrepareVisit: (result: ShopResult) => void;
 }) {
   return (
     <CardShell icon={<Store size={17} />} title={title} source={source}>
@@ -286,6 +324,7 @@ function ShopResultsCard({
         selectedShopIds={selectedShopIds}
         onAskInquiry={onAskInquiry}
         onToggleCompare={onToggleCompare}
+        onPrepareVisit={onPrepareVisit}
       />
     </CardShell>
   );
@@ -296,11 +335,13 @@ function ShopResultList({
   selectedShopIds,
   onAskInquiry,
   onToggleCompare,
+  onPrepareVisit,
 }: {
   results: ShopResult[];
   selectedShopIds: string[];
   onAskInquiry: (result: ShopResult) => void;
   onToggleCompare: (result: ShopResult) => void;
+  onPrepareVisit: (result: ShopResult) => void;
 }) {
   if (!results.length) return <EmptyResults>با این فیلترها فروشگاهی پیدا نشد. شعاع را بیشتر کن یا فیلتر بازبودن را بردار.</EmptyResults>;
 
@@ -358,6 +399,9 @@ function ShopResultList({
               ) : <span className="muted-action"><MapPin size={14} /> مسیر نامشخص</span>}
               <button type="button" className="link-action" onClick={() => onAskInquiry(result)}>
                 استعلام نمونه‌سازی
+              </button>
+              <button type="button" className="link-action" onClick={() => onPrepareVisit(result)}>
+                کارت مراجعه
               </button>
               <button
                 type="button"

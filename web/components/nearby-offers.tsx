@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Clock3, MapPin, Navigation, PackageSearch, Store } from "lucide-react";
+import { Clock3, MapPin, Navigation, PackageSearch, Route, Store } from "lucide-react";
 
 import {
   directionsUrl,
@@ -37,6 +37,7 @@ export function NearbyOffers({
   selectedShopIds,
   onToggleCompare,
   onAskInquiry,
+  onPrepareVisit,
 }: {
   product: Product;
   center: MapPoint;
@@ -52,6 +53,7 @@ export function NearbyOffers({
   selectedShopIds: string[];
   onToggleCompare: (result: ShopResult) => void;
   onAskInquiry: (result: ShopResult) => void;
+  onPrepareVisit: (result: ShopResult) => void;
 }) {
   return (
     <section className="nearby-offers" aria-label="فروشگاه‌های نزدیک">
@@ -106,6 +108,7 @@ export function NearbyOffers({
                         {selectedShopIds.includes(result.shop.id) ? "انتخاب شد" : "مقایسه"}
                       </button>
                       <button type="button" onClick={() => onAskInquiry(result)}>استعلام نمونه‌سازی</button>
+                      <button type="button" onClick={() => onPrepareVisit(result)}><Route size={13} /> کارت مراجعه</button>
                     </div>
                   </div>
                   <div className="nearby-shop-price">
