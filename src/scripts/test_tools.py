@@ -28,7 +28,9 @@ async def run_smoke_checks() -> list[tuple[str, str]]:
     tool_map = {item.name: item for item in TOOLS}
     required_names = {
         "search_products", "get_offers", "compare_shops", "check_open_now",
-        "inquire_shop", "find_alternatives", "get_shop_location_hint",
+        "inquire_shop", "draft_inquiry", "send_inquiry", "send_inquiry_batch",
+        "get_inquiry_status", "list_inquiries", "cancel_inquiry", "follow_up_inquiry",
+        "find_alternatives", "get_shop_location_hint",
         "suggest_market_hub", "product_quick_look", "web_search", "resolve_location",
         "save_user_preference", "load_user_preferences",
     }
@@ -36,11 +38,27 @@ async def run_smoke_checks() -> list[tuple[str, str]]:
     if missing:
         raise AssertionError(f"ابزارها در registry نیستند: {sorted(missing)}")
 
+    draft_res = await tool_map["draft_inquiry"].ainvoke({
+        "shop_id": seed["shop_id"],
+        "product_id": seed["product_id"],
+        "eta_minutes": 30,
+        "hold_requested": True,
+    })
+    _assert_result("draft_inquiry", draft_res)
+    draft_inquiry_id = draft_res["data"]["inquiry_id"]
+
     cases = [
         ("search_products", {"query": "کتونی", "limit": 3}),
         ("get_offers", {"product_id": seed["product_id"], "lat": 35.7219, "lng": 51.4097, "radius": 30}),
         ("compare_shops", {"shop_ids": [seed["shop_id"]], "product_id": seed["product_id"]}),
         ("check_open_now", {"shop_id": seed["shop_id"]}),
+        ("draft_inquiry", {"shop_id": seed["shop_id"], "product_id": seed["product_id"], "eta_minutes": 20}),
+        ("send_inquiry", {"inquiry_id": draft_inquiry_id, "confirmed": True}),
+        ("send_inquiry_batch", {"shop_ids": [seed["shop_id"]], "product_id": seed["product_id"], "confirmed": True}),
+        ("get_inquiry_status", {"inquiry_id": draft_inquiry_id}),
+        ("list_inquiries", {"shop_id": seed["shop_id"]}),
+        ("cancel_inquiry", {"inquiry_id": draft_inquiry_id}),
+        ("follow_up_inquiry", {"inquiry_id": draft_inquiry_id}),
         ("inquire_shop", {"shop_id": seed["shop_id"], "product_id": seed["product_id"]}),
         ("find_alternatives", {"product_id": seed["product_id"], "shop_id": seed["shop_id"], "lat": 35.7219, "lng": 51.4097, "radius": 30}),
         ("get_shop_location_hint", {"shop_id": seed["shop_id"]}),

@@ -9,12 +9,19 @@ from src.core.tools.discovery import (
 )
 from src.core.tools.preferences import load_user_preferences, save_user_preference
 from src.core.tools.shops import (
+    cancel_inquiry,
     check_open_now,
     compare_shops,
+    draft_inquiry,
     find_alternatives,
+    follow_up_inquiry,
+    get_inquiry_status,
     get_offers,
     get_shop_location_hint,
     inquire_shop,
+    list_inquiries,
+    send_inquiry,
+    send_inquiry_batch,
 )
 
 TOOLS = [
@@ -22,6 +29,13 @@ TOOLS = [
     get_offers,
     compare_shops,
     check_open_now,
+    draft_inquiry,
+    send_inquiry,
+    send_inquiry_batch,
+    get_inquiry_status,
+    list_inquiries,
+    cancel_inquiry,
+    follow_up_inquiry,
     inquire_shop,
     find_alternatives,
     get_shop_location_hint,

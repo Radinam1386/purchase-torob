@@ -93,23 +93,38 @@ interface ShopResult {                      // خروجی get_offers
   openNow: Known<boolean>; reasons: string[];   // «چرا پیشنهاد شد؟»
 }
 interface Inquiry {                         // شبیه‌سازی
-  id: string; shopId: string; productId: string;
-  status: "sent" | "reviewing" | "answered" | "no_answer";
-  answer?: { inStock: boolean; price?: number; note?: string };
+  id: string; shopId: string; productId: string; offerId?: string;
+  channel: "panel" | "sms" | "chat" | "ai_call";
+  status: "draft" | "sent" | "delivered" | "read" | "answered" | "no_answer" | "cancelled";
+  message?: string;
+  requests?: { etaMinutes?: number; quantity?: number; sizeOrColor?: string; holdRequested?: boolean };
+  answer?: { inStock: boolean; price?: number; note?: string; priceChanged?: boolean; holdConfirmed?: boolean; transcript?: string };
+  timeline?: { stage: string; label: string; timestamp?: string; completed: boolean }[];
+  datasetPrice?: number;
   simulated: true;
 }
 ```
 
-## ۹. ابزارهای ایجنت
-1. `search_products(query, filters)`
-2. `get_offers(product_id, lat, lng, radius, max_price, installment, express, open_now)`
-3. `compare_shops(shop_ids, product_id)`
-4. `check_open_now(shop_id)` — ساعت تهران
-5. `inquire_shop(shop_id, product_id)` — شبیه‌سازی
-6. `find_alternatives(product_id, shop_id, constraints)`
-7. `get_shop_location_hint(shop_id)` — راهنمای داخل پاساژ
-8. `suggest_market_hub(category_or_product)` — fallback بورس کالا
-9. `product_quick_look(product_id)` — خلاصه نقد + نکات خرید حضوری (برچسب AI)
+## ۹. ابزارهای ایجنت (۱۸ ابزار محلی)
+1. `search_products(query, filters)` — جستجوی کاتالوگ
+2. `get_offers(product_id, lat, lng, radius, max_price, installment, express, open_now)` — دریافت آفرهای معتبر با برچسب تازگی قیمت
+3. `compare_shops(product_id, shop_ids, offer_ids, lat, lng)` — مقایسه‌ی فروشگاه‌های منتخب
+4. `check_open_now(shop_id)` — بررسی ساعت کاری با ساعت تهران
+5. `draft_inquiry(shop_id, product_id, offer_id, eta_minutes, quantity, size_or_color, hold_requested, channel)` — ایجاد پیش‌نویس استعلام
+6. `send_inquiry(inquiry_id, confirmed, edited_message)` — ارسال استعلام پس از تأیید صریح کاربر
+7. `send_inquiry_batch(shop_ids, product_id, eta_minutes, quantity, size_or_color, hold_requested, confirmed)` — استعلام دسته‌ای هم‌زمان (لغو خودکار با اولین تأیید)
+8. `get_inquiry_status(inquiry_id)` — دریافت وضعیت زنده و تایم‌لاین ۵ مرحله‌ای
+9. `list_inquiries(shop_id, status, limit)` — فهرست استعلام‌ها
+10. `cancel_inquiry(inquiry_id, reason)` — لغو استعلام فعال
+11. `follow_up_inquiry(inquiry_id, escalate_channel)` — پیگیری مجدد استعلام بی‌پاسخ
+12. `inquire_shop(shop_id, product_id, offer_id)` — استعلام تک‌مرحله‌ای (سازگاری به عقب)
+13. `find_alternatives(product_id, shop_id, max_price, lat, lng, radius, installment)` — جایگزین‌های نزدیک
+14. `get_shop_location_hint(shop_id)` — راهنمای رسیدن داخل پاساژ
+15. `suggest_market_hub(category_or_product)` — بورس‌های کالا در تهران
+16. `product_quick_look(product_id)` — خلاصه نکات خرید حضوری
+17. `save_user_preference(key, value)` — ذخیره ترجیحات کاربر
+18. `load_user_preferences()` — بارگذاری ترجیحات کاربر
+تکمیلی: `web_search` و `resolve_location`.
 
 ## ۱۰. ترتیب گام‌ها
 1. طراحی UI + قرارداد داده (بدون کد)
@@ -152,3 +167,12 @@ interface Inquiry {                         // شبیه‌سازی
 14. بعد از انتخاب مدل، endpoint `POST /api/offers` ابزار `get_offers` را مستقیم اجرا می‌کند؛ فیلترها بدون tool-call تازه‌ی LLM اعمال می‌شوند و آفرها روی Leaflet/OpenStreetMap همراه مسیر و فهرست فروشگاه‌ها نمایش داده می‌شوند. اگر نتیجه‌ای نماند، UI افزایش شعاع، برداشتن فیلترها و درخواست پیشنهاد بورس کالا را فراهم می‌کند.
 15. `Dockerfile.api`، `web/Dockerfile` و `docker-compose.yml` برای اجرای دو سرویس اضافه شدند. راهنمای فلو پنج‌دقیقه‌ای در `docs/demo-runbook.fa.md` است. انتشار نهایی روی زیرساخت اسپانسر و ضبط/تحویل ویدئو هنوز انجام نشده؛ برای آن دامنه، دسترسی و روش استقرار اسپانسر لازم است. اصول شفافیت بخش ۵ دست‌نخورده‌اند.
 16. پیگیری آدیت `53ee66d`: تطبیق مدل S24 FE روی دیتاست واقعی (۵ آفر)، تفکیک وضعیت نامشخص پرداخت، شیفت کاری عبوری از نیمه‌شب، حفظ فیلترها/محصول انتخاب‌شده در درخواست‌های هم‌زمان، اتصال آفر دقیق به مقایسه و استعلام، readiness دیتابیس، حفظ ترجیحات و استعلام‌ها هنگام بازسازی دیتاست، سقف تاریخچه/نرخ/هم‌زمانی API و دسترس‌پذیری پنل موبایل اصلاح شدند. در Compose، Nginx درگاه عمومی با سقف نرخ و هم‌زمانی است و API پورت عمومی ندارد؛ سقف درون‌فرایندی API نیز برای اجرای محلی باقی است. ۹ تست رگرسیون در `src/scripts/test_regressions.py` اضافه شد.
+17. پیاده‌سازی کامل «سامانه‌ی ارتباط و پیگیری با فروشنده (شبیه‌سازی‌شده)» با الهام از Let Google Call:
+    - **ارتباط ۱۰۰٪ شبیه‌سازی‌شده:** ۴ کانال شبیه‌سازی (`panel`، `sms`، `chat`، `ai_call`). عدم تولید یا افشای شماره‌های جعلی و عدم ارسال پیام/تماس واقعی.
+    - **شفافیت قیمت و تازگی:** تفکیک اکید قیمت دیتاست از قیمت نمونه‌سازی فروشنده (قیمت دیتاست هرگز بازنویسی نمی‌شود). محاسبه‌ی برچسب تازگی قیمت (`fresh`، `moderate`، `stale` نیازمند استعلام).
+    - **فلو پیش‌نویس (Draft-First):** هیچ استعلامی بدون تأیید صریح و بررسی کاربر ارسال نمی‌شود (`draft_inquiry` ➔ `send_inquiry`).
+    - **بررسی زمان رسیدن کاربر (ETA) و ساعت کاری فروشگاه:** هشدار خودکار در صورت رسیدن کاربر بعد از زمان تعطیلی فروشگاه و عدم پاسخ‌دهی فروشگاه‌های بسته.
+    - **استعلام دسته‌ای (Batch):** ارسال هم‌زمان به ۲ تا ۳ فروشگاه با لغو خودکار استعلام‌های باقی‌مانده پس از دریافت اولین پاسخ مثبت موجودی.
+    - **پیگیری خودکار و جایگزین:** در صورت عدم پاسخ یا ناموجودی، دستیار به‌طور خودکار `find_alternatives` را برای فروشگاه‌های نزدیک فراخوانی می‌کند.
+    - **پنل اختصاصی شبیه‌ساز فروشنده (`/seller-sim`):** داشبورد با دکمه‌های ۱-لمسی برای پاسخ‌دهی فروشنده (موجود، ناموجود، تغییر قیمت، ۱۰ دقیقه بعد) و پشتیبانی از سناریوی دموی ۲ پنجره‌ای.
+    - **آزمون و ارزیابی:** ۱۸ ابزار محلی پاس (۱۸/۱۸)، ۱۵ تست رگرسیون پاس (۱۵/۱۵)، ۸ سناریوی ارزیابی جدید در `evals/scenarios.json` (مجموع ۳۳ سناریو) و کامپایل موفق فرانت‌اند Next.js با صفر خطای تایپ‌اسکریپت.

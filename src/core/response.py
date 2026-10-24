@@ -15,8 +15,10 @@ from src.core.contract import (
     AssistantResponse,
     CompareCard,
     HubCard,
+    InquiryBatchCard,
     InquiryCard,
     MallGuideCard,
+    MessageDraftCard,
     ProductCards,
     QuickLookCard,
     ShopCards,
@@ -29,6 +31,12 @@ CARD_MODELS = {
     "search_products": ProductCards,
     "get_offers": ShopCards,
     "compare_shops": CompareCard,
+    "draft_inquiry": MessageDraftCard,
+    "send_inquiry": InquiryCard,
+    "send_inquiry_batch": InquiryBatchCard,
+    "get_inquiry_status": InquiryCard,
+    "cancel_inquiry": InquiryCard,
+    "follow_up_inquiry": InquiryCard,
     "inquire_shop": InquiryCard,
     "find_alternatives": AlternativesCard,
     "suggest_market_hub": HubCard,
@@ -132,12 +140,20 @@ def parse_tool_payload(content: Any) -> dict[str, Any] | None:
 
 def card_data_for_tool(name: str, data: Any, source: str) -> dict[str, Any] | None:
     if name == "search_products":
-        return {"kind": "product_cards", "products": _limit(data), "source": source}
+        return {"kind": "product_cards", "products": data[:20] if isinstance(data, list) else [], "source": source}
     if name == "get_offers":
         return {"kind": "shop_cards", "results": _advisory_results(data), "source": source}
     if name == "compare_shops":
         return {"kind": "compare", "results": _advisory_results(data), "source": source}
+    if name == "draft_inquiry":
+        return data
+    if name in {"send_inquiry", "get_inquiry_status", "cancel_inquiry", "follow_up_inquiry"}:
+        return data
+    if name == "send_inquiry_batch":
+        return data
     if name == "inquire_shop":
+        if isinstance(data, dict) and "kind" in data:
+            return data
         return {"kind": "inquiry", "inquiry": data, "source": "simulated"}
     if name == "find_alternatives":
         return {

@@ -13,15 +13,27 @@ export interface MapPoint {
 export default function LeafletMap({
   center,
   results,
+  selectedShopId,
+  onSelectShop,
 }: {
   center: MapPoint;
   results: ShopResult[];
+  selectedShopId?: string | null;
+  onSelectShop?: (shopId: string) => void;
 }) {
   const resultsByShop = new Map<string, ShopResult[]>();
   for (const result of results) {
     const group = resultsByShop.get(result.shop.id) ?? [];
     group.push(result);
     resultsByShop.set(result.shop.id, group);
+  }
+  // Lightweight deterministic spatial clustering; no synthetic coordinates are introduced.
+  const clusters = new Map<string, ShopResult[][]>();
+  for (const group of resultsByShop.values()) {
+    const item = group[0];
+    if (typeof item.shop.lat !== "number" || typeof item.shop.lng !== "number") continue;
+    const key = `${Math.floor(item.shop.lat / 0.004)}:${Math.floor(item.shop.lng / 0.004)}`;
+    clusters.set(key, [...(clusters.get(key) ?? []), group]);
   }
 
   return (
@@ -37,16 +49,25 @@ export default function LeafletMap({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {[...resultsByShop.values()].map((shopResults) => {
+      {[...clusters.values()].flatMap((cluster) => {
+        if (cluster.length > 1) {
+          const lat = cluster.reduce((sum, group) => sum + group[0].shop.lat!, 0) / cluster.length;
+          const lng = cluster.reduce((sum, group) => sum + group[0].shop.lng!, 0) / cluster.length;
+          return [<CircleMarker key={`cluster-${cluster[0][0].shop.id}`} center={[lat,lng]} radius={Math.min(18, 9 + Math.log2(cluster.length) * 2)} pathOptions={{color:"#fff",weight:3,fillColor:"#bd4b38",fillOpacity:.9}}><Popup><div className="map-popup" dir="rtl"><strong>{cluster.length} فروشگاه نزدیک به هم</strong>{cluster.map(group=><div key={group[0].shop.id}><b>{group[0].shop.displayName}</b><span>{formatDistance(group[0].distanceKm)} · {formatPrice(group[0].offer.price,group[0].offer.priceUnit)}</span></div>)}</div></Popup></CircleMarker>];
+        }
+        const shopResults = cluster[0];
         const result = shopResults[0];
-        if (typeof result.shop.lat !== "number" || typeof result.shop.lng !== "number") return null;
-        const directions = directionsUrl(result.shop.lat, result.shop.lng);
+        const lat = result.shop.lat;
+        const lng = result.shop.lng;
+        if (typeof lat !== "number" || typeof lng !== "number") return null;
+        const directions = directionsUrl(lat, lng);
         return (
           <CircleMarker
             key={result.shop.id}
-            center={[result.shop.lat, result.shop.lng]}
+            center={[lat, lng]}
             radius={8}
-            pathOptions={{ color: "#fff", weight: 3, fillColor: "#d86c4a", fillOpacity: 1 }}
+            eventHandlers={{ click: () => onSelectShop?.(result.shop.id) }}
+            pathOptions={{ color: "#fff", weight: 3, fillColor: selectedShopId===result.shop.id ? "#222" : "#d86c4a", fillOpacity: 1 }}
           >
             <Popup>
               <div className="map-popup" dir="rtl">

@@ -18,3 +18,6 @@ def reset_current_user_id(token: Token[str]) -> None:
 
 def current_user_id() -> str:
     return _current_user_id.get()
+
+
+get_current_user_id = current_user_id

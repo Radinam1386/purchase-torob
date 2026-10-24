@@ -25,6 +25,8 @@ def database(*, readonly: bool = False) -> Iterator[sqlite3.Connection]:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
+        if not readonly:
+            ensure_inquiries_schema(connection)
         try:
             yield connection
             if not readonly:
@@ -35,6 +37,61 @@ def database(*, readonly: bool = False) -> Iterator[sqlite3.Connection]:
             raise
         finally:
             connection.close()
+
+
+def ensure_inquiries_schema(connection: sqlite3.Connection) -> None:
+    """Ensure the inquiries table exists with all lifecycle and simulation columns."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS inquiries (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            shop_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            offer_id TEXT,
+            channel TEXT NOT NULL DEFAULT 'panel',
+            status TEXT NOT NULL,
+            message TEXT,
+            requests_json TEXT,
+            answer_json TEXT,
+            created_at TEXT NOT NULL,
+            sent_at TEXT,
+            delivered_at TEXT,
+            read_at TEXT,
+            answered_at TEXT,
+            expires_at TEXT,
+            persona TEXT,
+            simulated INTEGER DEFAULT 1,
+            batch_id TEXT,
+            payload_json TEXT
+        )
+        """
+    )
+    existing_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(inquiries)").fetchall()
+    }
+    columns_to_add = [
+        ("session_id", "TEXT"),
+        ("offer_id", "TEXT"),
+        ("channel", "TEXT NOT NULL DEFAULT 'panel'"),
+        ("message", "TEXT"),
+        ("requests_json", "TEXT"),
+        ("answer_json", "TEXT"),
+        ("sent_at", "TEXT"),
+        ("delivered_at", "TEXT"),
+        ("read_at", "TEXT"),
+        ("answered_at", "TEXT"),
+        ("expires_at", "TEXT"),
+        ("persona", "TEXT"),
+        ("simulated", "INTEGER DEFAULT 1"),
+        ("batch_id", "TEXT"),
+        ("payload_json", "TEXT"),
+    ]
+    for col_name, col_def in columns_to_add:
+        if col_name not in existing_columns:
+            connection.execute(f"ALTER TABLE inquiries ADD COLUMN {col_name} {col_def}")
+
 
 
 @contextmanager

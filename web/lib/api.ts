@@ -112,3 +112,97 @@ export async function searchOffers(input: {
   }
   return body.data;
 }
+
+export async function savePriceCheck(input: {
+  productId: string; shopId: string; offerId?: string; outcome: string;
+  reportedPrice?: number; method: string; note?: string;
+}) {
+  const response = await fetch(`${API_ROOT}/api/price-checks`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  });
+  const body = await response.json().catch(() => null) as { detail?: string; id?: string } | null;
+  if (!response.ok || !body?.id) throw new Error(body?.detail ?? "ثبت بررسی انجام نشد.");
+  return body;
+}
+
+export async function draftInquiry(input: {
+  shopId: string;
+  productId: string;
+  offerId?: string | null;
+  etaMinutes?: number | null;
+  quantity?: number;
+  sizeOrColor?: string | null;
+  holdRequested?: boolean;
+  channel?: string | null;
+}) {
+  const response = await fetch(`${API_ROOT}/api/inquiries/draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(err?.detail ?? "خطا در تهیه پیش‌نویس استعلام");
+  }
+  return await response.json();
+}
+
+export async function confirmInquiry(input: {
+  inquiryId: string;
+  editedMessage?: string | null;
+}) {
+  const response = await fetch(`${API_ROOT}/api/inquiries/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(err?.detail ?? "خطا در ارسال استعلام");
+  }
+  return await response.json();
+}
+
+export async function cancelInquiry(inquiryId: string, reason?: string) {
+  const response = await fetch(`${API_ROOT}/api/inquiries/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inquiryId, reason }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(err?.detail ?? "خطا در لغو استعلام");
+  }
+  return await response.json();
+}
+
+export async function listInquiries(params?: { shopId?: string; status?: string; limit?: number }) {
+  const query = new URLSearchParams();
+  if (params?.shopId) query.set("shop_id", params.shopId);
+  if (params?.status) query.set("status", params.status);
+  if (params?.limit) query.set("limit", String(params.limit));
+
+  const response = await fetch(`${API_ROOT}/api/inquiries?${query.toString()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("دریافت فهرست استعلام‌ها با خطا مواجه شد.");
+  return (await response.json()) as { inquiries: any[] };
+}
+
+export async function sellerReply(
+  inquiryId: string,
+  input: {
+    action: "in_stock" | "out_of_stock" | "price_changed" | "delay_10m";
+    customPrice?: number | null;
+    note?: string | null;
+  },
+) {
+  const response = await fetch(`${API_ROOT}/api/inquiries/${inquiryId}/seller-reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(err?.detail ?? "ثبت پاسخ با خطا مواجه شد.");
+  }
+  return await response.json();
+}

@@ -49,8 +49,11 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     user_id TEXT PRIMARY KEY, preferences_json TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS inquiries (
-    id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, product_id TEXT NOT NULL,
-    status TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL
+    id TEXT PRIMARY KEY, session_id TEXT, shop_id TEXT NOT NULL, product_id TEXT NOT NULL,
+    offer_id TEXT, channel TEXT NOT NULL DEFAULT 'panel', status TEXT NOT NULL,
+    message TEXT, requests_json TEXT, answer_json TEXT, created_at TEXT NOT NULL,
+    sent_at TEXT, delivered_at TEXT, read_at TEXT, answered_at TEXT, expires_at TEXT,
+    persona TEXT, simulated INTEGER DEFAULT 1, batch_id TEXT, payload_json TEXT
 );
 CREATE TABLE market_hubs (
     category TEXT NOT NULL, name TEXT NOT NULL, neighborhood TEXT NOT NULL,
@@ -120,11 +123,23 @@ def _preserve_user_data(connection: sqlite3.Connection, database_path: Path) -> 
             "SELECT user_id, preferences_json, updated_at FROM previous_database.user_preferences"
         )
     if "inquiries" in tables:
-        connection.execute(
-            "INSERT OR REPLACE INTO inquiries(id, shop_id, product_id, status, payload_json, created_at) "
-            "SELECT id, shop_id, product_id, status, payload_json, created_at "
-            "FROM previous_database.inquiries"
+        prev_cols = {
+            row[1]
+            for row in connection.execute("PRAGMA previous_database.table_info(inquiries)")
+        }
+        all_cols = (
+            "id", "session_id", "shop_id", "product_id", "offer_id",
+            "channel", "status", "message", "requests_json", "answer_json",
+            "created_at", "sent_at", "delivered_at", "read_at",
+            "answered_at", "expires_at", "persona", "simulated",
+            "batch_id", "payload_json"
         )
+        common_cols = [col for col in all_cols if col in prev_cols]
+        if common_cols:
+            cols_str = ", ".join(common_cols)
+            connection.execute(
+                f"INSERT OR REPLACE INTO inquiries({cols_str}) SELECT {cols_str} FROM previous_database.inquiries"
+            )
 
 
 def _seed_market_hubs(connection: sqlite3.Connection) -> None:

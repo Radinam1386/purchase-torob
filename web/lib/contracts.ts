@@ -36,6 +36,12 @@ export interface KnownValue<T> {
   known: boolean;
 }
 
+export interface PriceFreshness {
+  daysAgo?: number | null;
+  level: "fresh" | "moderate" | "stale" | "unknown";
+  label: string;
+}
+
 export interface Offer {
   id?: string;
   shopId: string;
@@ -43,6 +49,7 @@ export interface Offer {
   price: number | null;
   priceUnit: string;
   priceUpdatedAt?: string | null;
+  priceFreshness?: PriceFreshness | null;
   warranty?: { provider?: string | null; months?: number | null } | null;
   stock: StockStatus;
 }
@@ -53,6 +60,7 @@ export interface ShopResult {
   distanceKm: number;
   openNow: KnownValue<boolean>;
   reasons: string[];
+  priceFreshness?: PriceFreshness | null;
 }
 
 export interface MarketHub {
@@ -79,25 +87,113 @@ export interface AssistantResponse {
   clarificationQuestion?: string | null;
 }
 
+export type InquiryChannel = "panel" | "sms" | "chat" | "ai_call";
+export type InquiryStatus =
+  | "draft"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "answered"
+  | "no_answer"
+  | "cancelled";
+
+export interface InquiryTimelineStep {
+  stage: InquiryStatus;
+  label: string;
+  title?: string;
+  status?: string;
+  timestamp?: string | null;
+  completed: boolean;
+}
+
+export interface InquiryRequestDetails {
+  etaMinutes?: number | null;
+  quantity?: number;
+  sizeOrColor?: string | null;
+  holdRequested?: boolean;
+}
+
+export interface InquiryAnswer {
+  inStock: boolean;
+  price?: number | null;
+  note?: string | null;
+  transcript?: string | null;
+  priceChanged?: boolean;
+  holdConfirmed?: boolean;
+}
+
 export interface Inquiry {
   id: string;
   shopId: string;
   productId: string;
   offerId?: string | null;
-  status: "sent" | "reviewing" | "answered" | "no_answer";
-  answer?: { inStock: boolean; price?: number | null; note?: string | null } | null;
+  sessionId?: string | null;
+  channel: InquiryChannel;
+  status: InquiryStatus;
+  message?: string | null;
+  requests?: InquiryRequestDetails;
+  requestDetails?: InquiryRequestDetails | null;
+  answer?: InquiryAnswer | null;
+  timeline?: InquiryTimelineStep[];
+  createdAt?: string | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  answeredAt?: string | null;
+  expiresAt?: string | null;
+  persona?: string | null;
+  batchId?: string | null;
   simulated: true;
+  shopName?: string | null;
+  productTitle?: string | null;
+  datasetPrice?: number | null;
+}
+
+export interface MessageDraftCard {
+  kind: "message_draft";
+  inquiryId: string;
+  shop: Shop;
+  product: Product;
+  offer: Offer;
+  channel: InquiryChannel;
+  message: string;
+  requests: InquiryRequestDetails;
+  shopOpenAtEta: KnownValue<boolean>;
+  warning?: string | null;
+  confirmed: boolean;
+  source: "simulated";
+}
+
+export interface InquiryBatchItem {
+  inquiryId: string;
+  shop: Shop;
+  offer: Offer;
+  status: InquiryStatus;
+  channel: InquiryChannel;
+  answer?: InquiryAnswer | null;
+}
+
+export interface InquiryBatchCard {
+  kind: "inquiry_batch";
+  batchId: string;
+  product: Product;
+  items: InquiryBatchItem[];
+  source: "simulated";
 }
 
 export type AssistantCard =
   | { kind: "product_cards"; products: Product[]; source: DataSource }
   | { kind: "shop_cards"; results: ShopResult[]; source: DataSource }
   | { kind: "compare"; results: ShopResult[]; source: DataSource }
+  | MessageDraftCard
   | {
       kind: "inquiry";
       inquiry: Inquiry;
+      shop?: Shop | null;
+      product?: Product | null;
       source: "simulated";
     }
+  | InquiryBatchCard
   | {
       kind: "alternatives";
       options: { product: Product; results: ShopResult[] }[];
@@ -136,6 +232,7 @@ export interface ConversationState {
   selectedProductId: string | null;
   selectedShopIds: string[];
   selectedOfferIds: string[];
+  selectedInquiryIds?: string[];
   preferences: Record<string, unknown>;
 }
 
@@ -150,7 +247,15 @@ export interface ChatEntry extends ChatTurn {
 }
 
 export interface StreamEvent {
-  type: "text_delta" | "tool_start" | "tool_end" | "response" | "conversation" | "done" | "error";
+  type:
+    | "text_delta"
+    | "tool_start"
+    | "tool_end"
+    | "response"
+    | "conversation"
+    | "inquiry_update"
+    | "done"
+    | "error";
   text?: string;
   name?: string;
   callId?: string;
@@ -158,5 +263,6 @@ export interface StreamEvent {
   durationMs?: number;
   response?: AssistantResponse;
   conversation?: ConversationState;
+  inquiry?: Inquiry;
   message?: string;
 }

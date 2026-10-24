@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 
 from src.core.config import settings
-from src.core.contract import KnownValue, MarketHub, Offer, Product, Shop, ShopResult, Warranty
+from src.core.contract import KnownValue, MarketHub, Offer, PriceFreshness, Product, Shop, ShopResult, Warranty
 from src.core.text import normalize_fa, parse_json
 
 
@@ -182,6 +182,30 @@ def _minutes(value: str | None) -> int | None:
         return None
 
 
+def calculate_price_freshness(price_updated_at: str | None, now: datetime | None = None) -> PriceFreshness:
+    if not price_updated_at:
+        return PriceFreshness(days_ago=None, level="unknown", label="نامشخص")
+    if now is None:
+        now = datetime(2026, 10, 23, tzinfo=ZoneInfo(settings.timezone))
+    try:
+        updated_dt = datetime.fromisoformat(price_updated_at)
+        if updated_dt.tzinfo is None:
+            updated_dt = updated_dt.replace(tzinfo=now.tzinfo)
+        diff_days = max(0, (now.date() - updated_dt.date()).days)
+        if diff_days <= 2:
+            level = "fresh"
+            label = f"تازه ({diff_days} روز پیش)" if diff_days > 0 else "امروز به‌روز شده"
+        elif diff_days <= 7:
+            level = "moderate"
+            label = f"مناسب ({diff_days} روز پیش)"
+        else:
+            level = "stale"
+            label = f"کهنه ({diff_days} روز پیش — نیازمند استعلام)"
+        return PriceFreshness(days_ago=diff_days, level=level, label=label)
+    except Exception:
+        return PriceFreshness(days_ago=None, level="unknown", label="نامشخص")
+
+
 def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
     shop = shop_from_row(row)
     distance = haversine_km(lat, lng, float(row["lat"]), float(row["lng"]))
@@ -194,12 +218,14 @@ def shop_result_from_row(row, lat: float, lng: float) -> ShopResult:
             months=warranty_data.get("period_months") or None,
         )
 
+    freshness = calculate_price_freshness(row["price_updated_at"])
     offer = Offer(
         id=row["offer_id"],
         shop_id=row["offer_shop_id"],
         product_id=row["product_id"],
         price=int(row["price"]) if row["price"] is not None else None,
         price_updated_at=row["price_updated_at"],
+        price_freshness=freshness,
         warranty=warranty,
         stock="unverified",
     )

@@ -1,6 +1,7 @@
 import { Check, Crosshair, MapPin, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { formatNumber, parseToman } from "@/lib/format";
+import { useState } from "react";
 
 export interface FilterValues {
   location: string;
@@ -34,6 +35,7 @@ export function FilterPanel({
   onApply,
   onReset,
 }: FilterPanelProps) {
+  const [expanded, setExpanded] = useState(false);
   function update<K extends keyof FilterValues>(key: K, value: FilterValues[K]) {
     onChange({ ...values, [key]: value });
   }
@@ -45,7 +47,12 @@ export function FilterPanel({
   const radiusId = `${idPrefix}-radius-input`;
 
   return (
-    <aside className="filter-panel" aria-label="فیلترهای جستجوی حضوری">
+    <aside className="filter-panel filter-panel-collapsible" aria-label="فیلترهای جستجوی حضوری">
+      <button type="button" className="filter-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+        <span><SlidersHorizontal size={16}/> محدوده و فیلترها</span>
+        <small>{values.location || "مکان نامشخص"} · شعاع {formatNumber(values.radiusKm)} کیلومتر{parsedBudget ? ` · تا ${formatNumber(parsedBudget)} تومان` : ""}</small>
+      </button>
+      {expanded && <div className="filter-expanded">
       <div className="filter-heading">
         <div className="filter-heading-icon"><SlidersHorizontal size={17} /></div>
         <div>
@@ -114,13 +121,13 @@ export function FilterPanel({
           id={radiusId}
           type="range"
           min="1"
-          max="20"
+          max="50"
           step="1"
           value={values.radiusKm}
           onChange={(event) => update("radiusKm", Number(event.target.value))}
           aria-label="شعاع جستجو به کیلومتر"
         />
-        <div className="range-ends"><span>۱ کیلومتر</span><span>۲۰ کیلومتر</span></div>
+        <div className="range-ends"><span>۱ کیلومتر</span><span>۵۰ کیلومتر</span></div>
       </div>
 
       <div className="filter-divider" />
@@ -147,12 +154,13 @@ export function FilterPanel({
       </div>
 
       {hasSelectedProduct ? (
-        <button type="button" className="apply-filters" onClick={onApply} disabled={busy}>
+        <button type="button" className="apply-filters" onClick={() => { onApply(); setExpanded(false); }} disabled={busy}>
           <Check size={16} /> اعمال روی همین کالا
         </button>
       ) : (
         <p className="filter-hint">با جستجوی یک کالا، این شرایط روی فروشگاه‌ها اعمال می‌شوند.</p>
       )}
+      </div>}
     </aside>
   );
 }

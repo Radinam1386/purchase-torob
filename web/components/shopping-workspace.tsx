@@ -20,6 +20,8 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { FilterPanel, type FilterValues } from "@/components/filter-panel";
 import { NearbyOffers } from "@/components/nearby-offers";
@@ -62,6 +64,13 @@ const TOOL_LABELS: Record<string, string> = {
   get_offers: "در حال بررسی فروشگاه‌های نزدیک",
   compare_shops: "در حال مقایسه‌ی قیمت و فاصله",
   check_open_now: "در حال بررسی ساعت کاری",
+  draft_inquiry: "در حال آماده‌سازی پیش‌نویس استعلام",
+  send_inquiry: "در حال ارسال و پیگیری استعلام از فروشنده",
+  send_inquiry_batch: "در حال ارسال استعلام دسته‌ای به فروشگاه‌ها",
+  get_inquiry_status: "در حال بررسی وضعیت استعلام",
+  list_inquiries: "در حال بازیابی استعلام‌ها",
+  cancel_inquiry: "در حال لغو استعلام",
+  follow_up_inquiry: "در حال پیگیری مجدد استعلام",
   inquire_shop: "در حال آماده‌کردن استعلام نمونه‌سازی",
   find_alternatives: "در حال پیدا کردن جایگزین‌ها",
   get_shop_location_hint: "در حال آماده‌کردن مسیر داخل پاساژ",
@@ -82,6 +91,7 @@ interface SavedWorkspace {
 }
 
 export function ShoppingWorkspace() {
+  const router = useRouter();
   const [conversation, setConversation] = useState(INITIAL_CONVERSATION);
   const [filters, setFilters] = useState<FilterValues>({
     location: DEFAULT_LOCATION.label,
@@ -114,6 +124,8 @@ export function ShoppingWorkspace() {
   const mobileFilterDialog = useRef<HTMLDivElement>(null);
   const mobileFilterOpener = useRef<HTMLButtonElement>(null);
   const mobileFilterClose = useRef<HTMLButtonElement>(null);
+  const activeChatRequest = useRef<AbortController | null>(null);
+  const chatGeneration = useRef(0);
 
   const selectedProductId = conversation.selectedProductId;
   const selectedOfferIds = conversation.selectedOfferIds ?? [];
@@ -280,6 +292,8 @@ export function ShoppingWorkspace() {
     const nextHistory = [...history, { role: "user" as const, content: message }];
     let replyText = "";
     const controller = new AbortController();
+    activeChatRequest.current = controller;
+    const generation = chatGeneration.current;
 
     try {
       for await (const event of streamChat({
@@ -288,23 +302,29 @@ export function ShoppingWorkspace() {
         conversation: nextConversation,
         history,
       }, controller.signal)) {
+        if (generation !== chatGeneration.current) return;
         handleStreamEvent(event, replyId, (text) => {
           replyText = text;
         });
       }
+      if (generation !== chatGeneration.current) return;
       if (replyText) {
         setHistory([...nextHistory, { role: "assistant", content: replyText }]);
       } else {
         setHistory(nextHistory);
       }
     } catch (requestError) {
+      if (generation !== chatGeneration.current) return;
       const messageText = requestError instanceof Error ? requestError.message : "ارتباط قطع شد؛ دوباره تلاش کن.";
       updateMessage(replyId, { content: messageText });
       setHistory([...nextHistory, { role: "assistant", content: messageText }]);
     } finally {
-      setBusy(false);
-      setActiveTools({});
-      window.setTimeout(() => composer.current?.focus(), 50);
+      if (generation === chatGeneration.current) {
+        activeChatRequest.current = null;
+        setBusy(false);
+        setActiveTools({});
+        window.setTimeout(() => composer.current?.focus(), 50);
+      }
     }
 
     function handleStreamEvent(
@@ -326,7 +346,22 @@ export function ShoppingWorkspace() {
       if (event.type === "text_delta" && event.text) updateMessage(targetId, { content: event.text });
       if (event.type === "response" && event.response) {
         onResponse(event.response.text);
-        updateMessage(targetId, { content: event.response.text, cards: event.response.cards });
+        const productCard = event.response.cards.find((card): card is Extract<AssistantCard,{kind:"product_cards"}> => card.kind === "product_cards");
+        const visibleCards = productCard
+          ? event.response.cards.filter((card) => card.kind !== "product_cards")
+          : event.response.cards;
+        updateMessage(targetId, { content: productCard
+          ? `${event.response.text}\n\n${formatNumber(productCard.products.length)} گزینه در جستجوی اولیه پیدا شد. نتایج کامل در صفحه محصولات باز می‌شود.`
+          : event.response.text, cards: visibleCards });
+        if (productCard?.products.length) {
+          window.sessionStorage.setItem("torob-search-products", JSON.stringify({
+            query: message,
+            searchQuery: [...history.filter((turn) => turn.role === "user").slice(-3).map((turn) => turn.content), message].join(" "),
+            products: productCard.products,
+            createdAt: Date.now(),
+          }));
+          router.push(`/products?q=${encodeURIComponent(message)}&from=chat`);
+        }
         if (selectionVersion.current === selectionVersionAtRequest) {
           setConversation((current) => ({
             ...current,
@@ -473,6 +508,20 @@ export function ShoppingWorkspace() {
     );
   }
 
+  function handleConfirmDraft(draftId: string, editedText?: string) {
+    void submitMessage(
+      `پیش‌نویس استعلام ${draftId} مورد تأیید است؛ ارسالش کن.${editedText ? ` متن نهایی پیام: "${editedText}"` : ""}`,
+      conversation,
+    );
+  }
+
+  function handleCancelInquiry(inquiryId: string) {
+    void submitMessage(
+      `استعلام ${inquiryId} را لغو کن.`,
+      conversation,
+    );
+  }
+
   function handlePrepareVisit(result: ShopResult) {
     const offerId = result.offer.id;
     if (!offerId) {
@@ -548,7 +597,7 @@ export function ShoppingWorkspace() {
 
   function handleWidenRadius() {
     if (!marketplaceProduct || offersBusy) return;
-    const nextFilters = { ...filters, radiusKm: Math.min(filters.radiusKm + 4, 20) };
+    const nextFilters = { ...filters, radiusKm: Math.min(filters.radiusKm + 4, 50) };
     setFilters(nextFilters);
     void searchForProduct(marketplaceProduct, nextFilters, conversation);
   }
@@ -622,6 +671,33 @@ export function ShoppingWorkspace() {
     if (product) void searchForProduct(product, nextFilters, nextConversation);
   }
 
+  function startNewChat() {
+    chatGeneration.current += 1;
+    activeChatRequest.current?.abort();
+    activeChatRequest.current = null;
+    offerSearchSequence.current += 1;
+    selectionVersion.current += 1;
+    setMessages([]);
+    setHistory([]);
+    setDraft("");
+    setBusy(false);
+    setOffersBusy(false);
+    setActiveTools({});
+    setError("");
+    setNotice("");
+    setMarketplaceError("");
+    setMarketplaceProduct(null);
+    setMarketplaceResults([]);
+    setConversation((current) => ({ ...INITIAL_CONVERSATION, location: current.location, radiusKm: current.radiusKm }));
+    composer.current?.focus();
+  }
+
+  function clearChat() {
+    if (!messages.length && !history.length) return;
+    if (!window.confirm("گفتگو و محصولات انتخاب‌شده پاک شوند؟")) return;
+    startNewChat();
+  }
+
   function chooseSuggestion(label: string) {
     setDraft(label);
     composer.current?.focus();
@@ -641,7 +717,21 @@ export function ShoppingWorkspace() {
           <span className="brand-mark"><span /><i /></span>
           <span className="brand-name">ترب<span>حضوری</span></span>
         </a>
+        <nav className="chat-main-nav" aria-label="ناوبری اصلی">
+          <Link href="/">خانه</Link>
+          <Link href="/products">محصولات</Link>
+          <Link href="/chat" aria-current="page">دستیار خرید</Link>
+        </nav>
         <div className="topbar-context"><span className="topbar-pin"><MapPin size={14} /></span>تهران، خرید حضوری</div>
+        <a
+          href="/seller-sim"
+          target="_blank"
+          rel="noreferrer"
+          className="seller-sim-link"
+          title="شبیه‌ساز فروشنده برای سناریوی دو پنجره‌ای"
+        >
+          شبیه‌ساز فروشنده ↗
+        </a>
         <div className={`service-status status-${apiHealth}`} title={statusText}>
           <span className="status-dot" />
           <span>{statusText}</span>
@@ -681,6 +771,10 @@ export function ShoppingWorkspace() {
               <div className="advisor-avatar"><Store size={18} /></div>
               <div><h2>راهنمای خرید</h2><p>با اطلاعات فروشگاه‌های ترب</p></div>
               <span className="privacy-note"><Check size={13} /> بدون تماس واقعی</span>
+              <div className="chat-actions">
+                <button type="button" onClick={startNewChat} title="شروع گفتگوی خرید جدید">گفتگوی جدید</button>
+                <button type="button" onClick={clearChat} disabled={!messages.length && !history.length} title="پاک کردن گفتگو">پاک‌کردن چت</button>
+              </div>
             </div>
 
             <div className="conversation-scroll" ref={scrollArea} aria-live="polite">
@@ -705,6 +799,8 @@ export function ShoppingWorkspace() {
                             onAskInquiry={handleAskInquiry}
                             onToggleCompare={handleToggleCompare}
                             onPrepareVisit={handlePrepareVisit}
+                            onConfirmDraft={handleConfirmDraft}
+                            onCancelInquiry={handleCancelInquiry}
                           />
                         )}
                       </div>
@@ -718,25 +814,6 @@ export function ShoppingWorkspace() {
                     </div>
                   )}
                 </div>
-              )}
-              {marketplaceProduct && (
-                <NearbyOffers
-                  product={marketplaceProduct}
-                  center={conversation.location ?? DEFAULT_LOCATION}
-                  results={marketplaceResults}
-                  error={marketplaceError}
-                  busy={offersBusy}
-                  onWidenRadius={handleWidenRadius}
-                  onRelaxFilters={handleRelaxFilters}
-                  onSuggestMarket={handleSuggestMarket}
-                  onSearchWeb={handleSearchWeb}
-                  canWidenRadius={filters.radiusKm < 20}
-                  selectedOfferIds={selectedOfferIds}
-                  onToggleCompare={handleToggleCompare}
-                  onAskInquiry={handleAskInquiry}
-                  onPrepareVisit={handlePrepareVisit}
-                />
-              )}
             </div>
 
             {notice && !busy && (

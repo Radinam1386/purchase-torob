@@ -53,6 +53,53 @@ class InquiryInput(ToolInput):
     offer_id: str | None = None
 
 
+class DraftInquiryInput(ToolInput):
+    shop_id: str
+    product_id: str
+    offer_id: str | None = None
+    eta_minutes: int | None = Field(default=None, description="تخمین زمان رسیدن کاربر به دقیقه")
+    quantity: int = Field(default=1, ge=1, description="تعداد درخواستی")
+    size_or_color: str | None = Field(default=None, description="رنگ، سایز یا مشخصه فنی مورد نظر")
+    hold_requested: bool = Field(default=False, description="درخواست رزرو و نگهداری کالا تا رسیدن کاربر")
+    channel: str | None = Field(default=None, description="کانال ارتباطی (panel, sms, chat, ai_call)")
+
+
+class SendInquiryInput(ToolInput):
+    inquiry_id: str = Field(description="شناسه استعلام یا پیش‌نویس")
+    confirmed: bool = Field(default=False, description="تأیید صریح کاربر برای ارسال")
+    edited_message: str | None = Field(default=None, description="متن ویرایش‌شده پیام توسط کاربر")
+
+
+class SendInquiryBatchInput(ToolInput):
+    shop_ids: list[str] = Field(min_length=1, max_length=5, description="شناسه‌های ۲ تا ۳ فروشگاه")
+    product_id: str
+    eta_minutes: int | None = None
+    quantity: int = Field(default=1, ge=1)
+    size_or_color: str | None = None
+    hold_requested: bool = False
+    confirmed: bool = Field(default=False, description="تأیید صریح کاربر برای ارسال")
+
+
+class GetInquiryStatusInput(ToolInput):
+    inquiry_id: str
+
+
+class ListInquiriesInput(ToolInput):
+    shop_id: str | None = None
+    status: str | None = None
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class CancelInquiryInput(ToolInput):
+    inquiry_id: str
+    reason: str | None = None
+
+
+class FollowUpInquiryInput(ToolInput):
+    inquiry_id: str
+    escalate_channel: bool = Field(default=True, description="ارتقای کانال در صورت بی‌پاسخ بودن")
+
+
 class AlternativesInput(ToolInput):
     product_id: str
     shop_id: str | None = None

@@ -14,6 +14,8 @@ import {
 } from "@/lib/format";
 import type { Product, ShopResult } from "@/lib/contracts";
 import type { MapPoint } from "@/components/leaflet-map";
+import { savePriceCheck } from "@/lib/api";
+import { useState } from "react";
 
 const LeafletMap = dynamic(() => import("@/components/leaflet-map"), {
   ssr: false,
@@ -51,6 +53,23 @@ export function NearbyOffers({
   onAskInquiry: (result: ShopResult) => void;
   onPrepareVisit: (result: ShopResult) => void;
 }) {
+  const [reportFor, setReportFor] = useState<string | null>(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportMessage, setReportMessage] = useState("");
+  const [reportOutcome, setReportOutcome] = useState("confirmed");
+  const [reportPrice, setReportPrice] = useState("");
+  const [callScript, setCallScript] = useState<string | null>(null);
+  async function submitReport(result: ShopResult) {
+    setReportBusy(true); setReportMessage("");
+    try {
+      await savePriceCheck({productId:product.id,shopId:result.shop.id,offerId:result.offer.id,
+        outcome:reportOutcome,reportedPrice:reportPrice?Number(reportPrice.replace(/\D/g,"")):undefined,
+        method:"phone"});
+      setReportMessage("نتیجه با منبع «گزارش خریدار» ثبت شد؛ قیمت دیتاست تغییری نکرد.");
+      setReportFor(null); setReportPrice("");
+    } catch (error) { setReportMessage(error instanceof Error?error.message:"ثبت نتیجه ناموفق بود."); }
+    finally { setReportBusy(false); }
+  }
   return (
     <section className="nearby-offers" aria-label="فروشگاه‌های نزدیک">
       <div className="nearby-heading">
@@ -79,7 +98,7 @@ export function NearbyOffers({
           </div>
           <p className="map-caption"><MapPin size={13} /> نقشه موقعیت ثبت‌شده‌ی فروشگاه‌ها را نشان می‌دهد؛ قبل از حرکت، مسیر را بررسی کن.</p>
           <div className="nearby-list">
-            {results.slice(0, 8).map((result) => {
+            {results.map((result) => {
               const route = directionsUrl(result.shop.lat, result.shop.lng);
               const offerId = result.offer?.id;
               return (
@@ -105,13 +124,52 @@ export function NearbyOffers({
                       >
                         {offerId && selectedOfferIds.includes(offerId) ? "انتخاب شد" : "مقایسه"}
                       </button>
-                      <button type="button" disabled={!offerId} onClick={() => onAskInquiry(result)}>استعلام نمونه‌سازی</button>
+                      <button type="button" disabled={!offerId} onClick={() => onAskInquiry(result)}>
+                        پیش‌نویس استعلام
+                      </button>
                       <button type="button" disabled={!offerId} onClick={() => onPrepareVisit(result)}><Route size={13} /> کارت مراجعه</button>
+                      <button type="button" onClick={() => setReportFor(reportFor===offerId?null:offerId??null)}>بررسی قیمت و موجودی</button>
+                      <button type="button" onClick={() => setCallScript(callScript===offerId?null:offerId??null)}>متن تماس</button>
                     </div>
+                    {reportFor===offerId&&<div className="price-check-form"><b>ثبت نتیجه‌ی تماس یا مراجعه</b><small>این گزارش از طرف خریدار است و تأیید رسمی فروشگاه محسوب نمی‌شود.</small><select value={reportOutcome} onChange={e=>setReportOutcome(e.target.value)}><option value="confirmed">موجود و قیمت تأیید شد</option><option value="changed">قیمت تغییر کرده</option><option value="unavailable">ناموجود</option><option value="no_answer">پاسخ نداد</option><option value="unclear">اطلاعات کافی نبود</option></select>{reportOutcome==="changed"&&<input inputMode="numeric" value={reportPrice} onChange={e=>setReportPrice(e.target.value)} placeholder="قیمت اعلام‌شده (تومان)"/>}<button disabled={reportBusy||!offerId} onClick={()=>void submitReport(result)}>{reportBusy?"در حال ثبت…":"ثبت گزارش"}</button>{reportMessage&&<small role="status">{reportMessage}</small>}</div>}
+                    {callScript===offerId&&<div className="price-check-form"><b>پیشنهاد متن تماس</b><textarea readOnly value={`سلام، وقت بخیر. درباره‌ی ${product.titleFa} تماس گرفتم. قیمت ثبت‌شده در دیتاست ${result.offer.price?new Intl.NumberFormat("fa-IR").format(result.offer.price)+" تومان":"نامشخص است"}. لطفاً بفرمایید الان موجود هست و قیمت فعلی چقدر است؟ امکان خرید حضوری دارید؟`} /><button type="button" onClick={()=>void navigator.clipboard?.writeText(`سلام، وقت بخیر. درباره‌ی ${product.titleFa} تماس گرفتم. لطفاً موجودی و قیمت فعلی را بفرمایید.`)}>کپی متن تماس</button><small>شماره‌ی معتبر در قرارداد داده موجود نیست؛ هیچ تماس خودکاری انجام نمی‌شود و قیمت بالا زنده نیست.</small></div>}
                   </div>
                   <div className="nearby-shop-price">
                     <strong>{formatPrice(result.offer.price, result.offer.priceUnit)}</strong>
                     <span><Clock3 size={11} /> {formatDate(result.offer.priceUpdatedAt)}</span>
+                    {result.offer.priceFreshness && (
+                      <span
+                        className={`freshness-badge freshness-${result.offer.priceFreshness.level}`}
+                        style={{
+                          fontSize: "0.72rem",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          display: "inline-block",
+                          marginTop: "2px",
+                          backgroundColor:
+                            result.offer.priceFreshness.level === "stale"
+                              ? "#fef2f2"
+                              : result.offer.priceFreshness.level === "moderate"
+                              ? "#fffbeb"
+                              : "#f0fdf4",
+                          color:
+                            result.offer.priceFreshness.level === "stale"
+                              ? "#b91c1c"
+                              : result.offer.priceFreshness.level === "moderate"
+                              ? "#b45309"
+                              : "#15803d",
+                          border: `1px solid ${
+                            result.offer.priceFreshness.level === "stale"
+                              ? "#fecaca"
+                              : result.offer.priceFreshness.level === "moderate"
+                              ? "#fde68a"
+                              : "#bbf7d0"
+                          }`,
+                        }}
+                      >
+                        {result.offer.priceFreshness.label}
+                      </span>
+                    )}
                     <span className="stock-label">{stockLabel(result.offer.stock)}</span>
                     {route && <a href={route} target="_blank" rel="noreferrer"><Navigation size={13} /> مسیر</a>}
                   </div>

@@ -92,16 +92,53 @@ class ShoppingAgent:
 
     @staticmethod
     def _advisor_gate(state: AgentState) -> dict[str, Any]:
-        """Ask once before searching when a broad product request lacks buying context."""
-        latest_user_text = next(
-            (message.content for message in reversed(state.get("messages", []))
-             if isinstance(message, HumanMessage)),
-            "",
-        )
+        """Collect only decision-critical details before searching broad requests."""
+        user_turns = [
+            str(message.content) for message in state.get("messages", [])
+            if isinstance(message, HumanMessage)
+        ]
+        latest = user_turns[-1] if user_turns else ""
         conversation = state.get("conversation", {})
-        if not _needs_clarification(latest_user_text, conversation):
+        if _explicit_search_now(latest) or _has_specific_model(latest):
             return {}
-        return {"clarification_question": _clarification_for(latest_user_text)}
+        if conversation.get("selected_product_id") or conversation.get("selectedProductId"):
+            return {}
+
+        advisor = dict((conversation.get("preferences") or {}).get("_advisor", {}))
+        category = advisor.get("category") or next(
+            (label for term, label in _BROAD_PRODUCT_CATEGORIES.items() if term in normalize_fa(" ".join(user_turns))),
+            None,
+        )
+        if not category:
+            return {}
+
+        history_text = normalize_fa(" ".join(user_turns))
+        budget_known = bool(conversation.get("budget") or re.search(
+            r"(?:\d[\d,.]*\s*(?:تومان|میلیون|هزار)|بودجه.{0,12}\d)", history_text
+        ))
+        use_known = bool(re.search(
+            r"موسیقی|موزیک|بازی|گیم|دانشگاه|کار|عکاسی|فیلم|ورزش|دویدن|روزمره|پیاده|سفر|مکالمه|تماس|طراحی",
+            history_text,
+        ))
+        requirements = {**advisor, "category": category, "budget_known": budget_known,
+                        "use_known": use_known, "status": "collecting_requirements"}
+        preferences = dict(conversation.get("preferences") or {})
+        preferences["_advisor"] = requirements
+        conversation["preferences"] = preferences
+
+        if not use_known:
+            question = f"{category} رو بیشتر برای چه کاری می‌خوای؟ اگر بودجه‌ات رو هم بگی دقیق‌تر پیشنهاد می‌دم."
+        elif not budget_known:
+            if category == "هدفون":
+                question = f"برای گوش دادن به موسیقی، حدود بودجه‌ات چقدره؟ ترجیح خاصی بین مدل‌های روگوشی یا ایرباد داری؟"
+            elif category in {"کتونی", "کفش"}:
+                question = f"برای {latest.strip()} در دسته‌ی {category}، حدود بودجه‌ات چقدره؟"
+            else:
+                question = f"اوکی، برای {category} و {latest.strip()}؛ حدود بودجه‌ات چقدره؟"
+        else:
+            return {"conversation": conversation}
+        requirements["status"] = "clarifying_requirements"
+        return {"conversation": conversation, "clarification_question": question}
 
     @staticmethod
     def _ask_clarifying_question(state: AgentState) -> dict[str, Any]:
@@ -293,6 +330,11 @@ def _needs_clarification(text: str, conversation: dict[str, Any]) -> bool:
     return any(category in text for category in _BROAD_PRODUCT_CATEGORIES)
 
 
+def _explicit_search_now(text: str) -> bool:
+    normalized = normalize_fa(text)
+    return bool(re.search(r"همین الان|الان نشون بده|محصولات رو نشون|خودت بهترین|جستجو کن|جست‌وجو کن|پیدا کن|خودت انتخاب کن|فرقی نداره|مهم نیست|بدون بودجه|هر قیمتی", normalized))
+
+
 def _clarification_for(text: str) -> str:
     category = next(
         (label for term, label in _BROAD_PRODUCT_CATEGORIES.items() if term in text),
@@ -423,19 +465,35 @@ def _update_conversation(state: ConversationState, graph_state: AgentState) -> N
     for message in graph_state.get("messages", []):
         if isinstance(message, AIMessage):
             for call in message.tool_calls:
-                if call["name"] in {"get_offers", "compare_shops"}:
-                    state.selected_product_id = call["args"].get("product_id")
-                if call["name"] == "compare_shops":
-                    state.selected_shop_ids = call["args"].get("shop_ids", [])
-                    state.selected_offer_ids = call["args"].get("offer_ids", [])
-                if call["name"] in {"inquire_shop", "get_shop_location_hint"}:
-                    offer_id = call["args"].get("offer_id")
+                cname = call["name"]
+                args = call.get("args", {})
+                if cname in {"get_offers", "compare_shops", "draft_inquiry"}:
+                    if args.get("product_id"):
+                        state.selected_product_id = args.get("product_id")
+                if cname == "compare_shops":
+                    state.selected_shop_ids = args.get("shop_ids", [])
+                    state.selected_offer_ids = args.get("offer_ids", [])
+                if cname in {"inquire_shop", "get_shop_location_hint", "draft_inquiry"}:
+                    offer_id = args.get("offer_id")
                     if offer_id:
                         state.selected_offer_ids = [offer_id]
-        elif isinstance(message, ToolMessage) and message.name == "resolve_location":
-            resolved = (parse_tool_payload(message.content) or {}).get("data")
-            if resolved:
-                state.location = ConversationLocation.model_validate(resolved)
+                    shop_id = args.get("shop_id")
+                    if shop_id and shop_id not in state.selected_shop_ids:
+                        state.selected_shop_ids = [shop_id]
+                if cname in {"send_inquiry", "get_inquiry_status", "cancel_inquiry", "follow_up_inquiry"}:
+                    inq_id = args.get("inquiry_id")
+                    if inq_id and inq_id not in state.selected_inquiry_ids:
+                        state.selected_inquiry_ids.append(inq_id)
+        elif isinstance(message, ToolMessage):
+            if message.name == "resolve_location":
+                resolved = (parse_tool_payload(message.content) or {}).get("data")
+                if resolved:
+                    state.location = ConversationLocation.model_validate(resolved)
+            elif message.name == "draft_inquiry":
+                data = (parse_tool_payload(message.content) or {}).get("data", {})
+                inq_id = data.get("inquiry_id")
+                if inq_id and inq_id not in state.selected_inquiry_ids:
+                    state.selected_inquiry_ids.append(inq_id)
 
 
 def _emit(event: AgentEvent, callback: EventCallback | None) -> AgentEvent:
