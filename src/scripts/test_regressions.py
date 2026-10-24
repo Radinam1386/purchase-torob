@@ -45,6 +45,40 @@ class PurchaseRegressionTests(unittest.TestCase):
         })
         self.assertNotIn("clarification_question", confirmed)
 
+    def test_advisor_accepts_persian_search_command_after_summary(self) -> None:
+        ready = ShoppingAgent._advisor_gate({
+            "messages": [HumanMessage(content="کتونی برای پیاده روی تا ۹۰ میلیون")],
+            "conversation": {},
+        })
+        self.assertIn("خلاصه ترجیحات", ready["clarification_question"])
+
+        for command in ("جست‌وجو کن", "جستجو کن", "جست و جو کن"):
+            with self.subTest(command=command):
+                result = ShoppingAgent._advisor_gate({
+                    "messages": [HumanMessage(content=command)],
+                    "conversation": ready["conversation"],
+                })
+                self.assertNotIn("clarification_question", result)
+                self.assertEqual(
+                    result["conversation"]["preferences"]["_advisor"]["status"],
+                    "searching",
+                )
+
+    def test_advisor_acknowledges_a_budget_edit_without_repeating_full_summary(self) -> None:
+        ready = ShoppingAgent._advisor_gate({
+            "messages": [HumanMessage(content="گوشی برای عکاسی تا ۲۰ میلیون")],
+            "conversation": {},
+        })
+        edited = ShoppingAgent._advisor_gate({
+            "messages": [HumanMessage(content="۹۰ میلیون بودجه")],
+            "conversation": ready["conversation"],
+        })
+
+        question = edited["clarification_question"]
+        self.assertIn("بودجه رو به 90,000,000 تومان تغییر دادم", question)
+        self.assertIn("با همین شرایط جست‌وجو رو شروع کنم؟", question)
+        self.assertNotIn("خلاصه ترجیحات", question)
+
     def test_persian_decimal_budget_and_installment_negation(self) -> None:
         state = ConversationState()
 
