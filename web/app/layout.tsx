@@ -21,8 +21,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="fa" dir="rtl">
-      <body>{children}</body>
+    <html lang="fa" dir="rtl" suppressHydrationWarning data-scroll-behavior="smooth">
+      <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("torob-theme");if(t==="dark"||((!t||t==="system")&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.dataset.theme="dark"}}catch(e){}`,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 }

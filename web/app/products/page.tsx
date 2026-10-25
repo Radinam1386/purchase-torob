@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { ArrowRight, MapPin, Search } from "lucide-react";
 import CatalogMap from "@/components/catalog-map";
+import { MobileNav } from "@/components/mobile-nav";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { formatDate, formatNumber, formatPrice, parseToman } from "@/lib/format";
 import { COMPARE_KEY, LAST_RESULTS_KEY, readSearchState, resultsUrl, searchParams, type SearchState } from "@/lib/search-state";
 
@@ -104,7 +106,7 @@ function Catalog() {
   const pages = data ? Math.ceil(data.total / data.page_size) : 0;
 
   return <main className="catalog-page" dir="rtl">
-    <header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/">خانه</Link><Link href="/chat">بازگشت به چت</Link></nav><span className="source-pill">دیتاست ترب</span></header>
+    <header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/">خانه</Link><Link href="/chat">بازگشت به چت</Link></nav><ThemeToggle /><span className="source-pill">دیتاست ترب</span></header>
     <section className="catalog-head"><Link className="back-link" href="/chat"><ArrowRight size={16} /> ادامه مشاوره و اصلاح ترجیحات</Link><div><span className="eyebrow">نتایج جست‌وجو</span><h1>{state.label || state.query ? `نتایج «${state.label || state.query}»` : "محصولات دیتاست"}</h1><p aria-live="polite" data-testid="result-count" data-total={data?.total}>{data ? `${formatNumber(data.total)} محصول مطابق جست‌وجو و فیلترها` : loading ? "در حال جست‌وجو…" : ""}</p></div></section>
     <form key={urlQuery} onSubmit={apply} aria-label="جست‌وجو و فیلتر محصولات">
       <div className="catalog-head"><div className="catalog-search"><Search size={18} /><input aria-label="نام کالا یا مدل" name="q" defaultValue={state.query} placeholder="نام کالا یا مدل" /><button type="submit">جست‌وجو</button></div></div>
@@ -135,6 +137,7 @@ function Catalog() {
       <nav className="load-more" aria-label="صفحه‌بندی نتایج">{state.page > 1 && <Link aria-label="صفحه قبل" href={resultsUrl({ ...state, page: state.page - 1 })}>صفحه قبل</Link>}<span>صفحه {formatNumber(state.page)} از {formatNumber(pages)} · {formatNumber(data.total)} محصول</span>{state.page < pages && <Link aria-label="صفحه بعد" href={resultsUrl({ ...state, page: state.page + 1 })}>صفحه بعد</Link>}</nav>
     </> : !error && <div className="catalog-state"><b>{data?.total ? "این صفحه از نتایج خالی است." : "محصولی با این فیلترها پیدا نشد."}</b><p>بودجه یا عبارت جست‌وجو را تغییر بده.</p>{state.page > 1 && <Link href={resultsUrl({ ...state, page: 1 })}>صفحه اول</Link>}<Link href={clearUrl}>جست‌وجوی بدون فیلتر</Link><Link href="/chat">ادامه با دستیار</Link></div>}
     </section><aside className="catalog-map-pane" aria-label="نقشه هم‌زمان نتایج"><CatalogMap queryString={urlQuery} /></aside></div>
+    <MobileNav />
   </main>;
 }
 

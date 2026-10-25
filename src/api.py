@@ -120,6 +120,44 @@ def live() -> dict[str, str]:
     return {"status": "alive"}
 
 
+_STATS_TTL_SECONDS = 600
+_stats_cache: dict[str, tuple[float, dict]] = {}
+
+
+@app.get("/api/stats")
+def dataset_stats() -> dict:
+    """Aggregate dataset counts for the landing page; cached to keep SQLite cheap."""
+    cached = _stats_cache.get("stats")
+    if cached and time.monotonic() - cached[0] < _STATS_TTL_SECONDS:
+        return cached[1]
+    try:
+        with database(readonly=True) as connection:
+            products = connection.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+            shops = connection.execute("SELECT COUNT(*) FROM shops").fetchone()[0]
+            offers = connection.execute("SELECT COUNT(*) FROM offers").fetchone()[0]
+            real_name_shops = connection.execute(
+                "SELECT COUNT(*) FROM shops WHERE has_real_name = 1"
+            ).fetchone()[0]
+            categories = connection.execute(
+                """SELECT category, COUNT(*) AS n FROM products
+                   WHERE category IS NOT NULL AND TRIM(category) != ''
+                   GROUP BY category ORDER BY n DESC LIMIT 6"""
+            ).fetchall()
+    except (OSError, sqlite3.Error) as error:
+        logger.info("Stats query failed: %s", error)
+        raise HTTPException(status_code=503, detail="پایگاه داده آماده نیست.") from error
+    payload = {
+        "source": "dataset",
+        "products": products,
+        "shops": shops,
+        "offers": offers,
+        "realNameShops": real_name_shops,
+        "topCategories": [{"name": row[0], "count": row[1]} for row in categories],
+    }
+    _stats_cache["stats"] = (time.monotonic(), payload)
+    return payload
+
+
 _RATE_LIMIT = max(1, int(os.getenv("CHAT_RATE_LIMIT_PER_MINUTE", "15")))
 _MAX_CONCURRENT_CHATS = max(1, int(os.getenv("CHAT_MAX_CONCURRENT", "4")))
 _rate_history: dict[str, deque[float]] = {}

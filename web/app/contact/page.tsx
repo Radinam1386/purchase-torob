@@ -8,6 +8,8 @@ import { formatDate, formatNumber, formatPrice, parseToman } from "@/lib/format"
 import { createBuyerReport, createMockCall, getBuyerReports, getContactSelection, getMockCall,
   rememberContactSelection, rememberContactStage, SCENARIOS,
   type BuyerReport, type ContactSelection, type MockRun, type MockScenario } from "@/lib/contact";
+import { MobileNav } from "@/components/mobile-nav";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const PROCESS = ["آماده‌سازی اطلاعات تماس", "شروع شبیه‌سازی", "ارسال درخواست Mock", "دریافت پاسخ شبیه‌سازی‌شده", "تحلیل پاسخ توسط Agent", "نمایش نتیجه"];
 function dateTime(value?: string | null) {
@@ -67,7 +69,7 @@ function Contact() {
   }
 
   return <main className="catalog-page contact-page" dir="rtl">
-    <header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/chat">ادامه گفتگو</Link><Link href="/contact/history">تاریخچه تماس‌های Mock</Link></nav><span className="source-pill">فقط شبیه‌سازی</span></header>
+    <header className="site-nav"><Link className="brand" href="/">ترب <span>حضوری</span></Link><nav><Link href="/chat">ادامه گفتگو</Link><Link href="/contact/history">تاریخچه تماس‌های Mock</Link></nav><ThemeToggle /><span className="source-pill">فقط شبیه‌سازی</span></header>
     <section className="contact-heading"><Link href={selection?`/products/${encodeURIComponent(selection.product.id)}`:"/products"}><ArrowRight size={16}/> بازگشت به محصول و فروشگاه‌ها</Link><h1><PhoneCall size={24}/> تماس شبیه‌سازی‌شده (Mock)</h1><p>هدف: بررسی قیمت، موجودی و امکان خرید حضوری. این مسیر هیچ تماس تلفنی واقعی برقرار نمی‌کند.</p></section>
     {loading?<div className="catalog-state" role="status"><LoaderCircle className="spin"/> در حال دریافت اطلاعات انتخاب‌شده…</div>:!selection?<div className="catalog-state" role="alert"><p>{error}</p><button onClick={()=>setRetry(value=>value+1)}>تلاش دوباره</button><Link href="/products">انتخاب محصول</Link></div>:<>
       <section className="contact-selection" data-testid="contact-selection" data-product-id={selection.product.id} data-shop-id={selection.shop.id} data-offer-id={selection.offer.id}>
@@ -84,6 +86,7 @@ function Contact() {
       {running && <ol className="contact-stages" aria-live="polite" aria-label="مراحل تماس Mock">{PROCESS.map((label,index)=><li key={label} className={index<3?"active":""}><span>{index+1}</span>{label}{index<3?<LoaderCircle size={14} className="spin"/>:<Clock size={14}/>}</li>)}</ol>}
       <ManualReport key={selection.offer.id} selection={selection}/>
     </>}
+    <MobileNav />
   </main>;
 }
 

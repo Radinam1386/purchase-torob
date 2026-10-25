@@ -1,11 +1,13 @@
 "use client";
 
 import {
+  ArrowDown,
   ArrowDownLeft,
   ArrowLeftRight,
   Check,
   ChevronLeft,
   CircleHelp,
+  Copy,
   Footprints,
   Headphones,
   Laptop,
@@ -16,15 +18,18 @@ import {
   ShoppingBag,
   SlidersHorizontal,
   Smartphone,
+  Square,
   Store,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { FilterPanel, type FilterValues } from "@/components/filter-panel";
+import { MobileNav } from "@/components/mobile-nav";
 import { ResponseCards } from "@/components/response-cards";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { getApiHealth, resolveLocation, searchOffers, streamChat } from "@/lib/api";
 import { formatNumber, parseToman } from "@/lib/format";
 import type {
@@ -112,7 +117,9 @@ export function ShoppingWorkspace() {
   const [marketplaceError, setMarketplaceError] = useState("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [apiHealth, setApiHealth] = useState<"checking" | "ready" | "offline" | "unconfigured">("checking");
-  const [activeTools, setActiveTools] = useState<Record<string, string>>({});
+  const [toolSteps, setToolSteps] = useState<{ id: string; label: string; done: boolean }[]>([]);
+  const [atBottom, setAtBottom] = useState(true);
+  const [copiedId, setCopiedId] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [locationBusy, setLocationBusy] = useState(false);
@@ -127,13 +134,31 @@ export function ShoppingWorkspace() {
   const chatGeneration = useRef(0);
   const initialized = useRef(false);
   const initialMessage = useRef<string | null>(null);
+  const stickToBottom = useRef(true);
 
   const selectedProductId = conversation.selectedProductId;
   const selectedOfferIds = conversation.selectedOfferIds ?? [];
-  const activeToolText = useMemo(() => {
-    const latest = Object.values(activeTools).at(-1);
-    return latest ?? "";
-  }, [activeTools]);
+
+  useEffect(() => {
+    const node = scrollArea.current;
+    if (!node) return;
+    function handleScroll() {
+      if (!node) return;
+      const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
+      const nearBottom = distance < 90;
+      stickToBottom.current = nearBottom;
+      setAtBottom(nearBottom);
+    }
+    node.addEventListener("scroll", handleScroll, { passive: true });
+    return () => node.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    const node = scrollArea.current;
+    // Instant jump: smooth scrolling fires intermediate events that flip the stick flag mid-stream.
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [toolSteps, marketplaceResults, messages, offersBusy]);
 
   useEffect(() => {
     if (initialized.current) return;
@@ -251,11 +276,6 @@ export function ShoppingWorkspace() {
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    const node = scrollArea.current;
-    if (node) node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
-  }, [activeTools, marketplaceResults, messages, offersBusy]);
-
   function updateMessage(id: string, update: Partial<ChatEntry>) {
     setMessages((current) => current.map((item) => item.id === id ? { ...item, ...update } : item));
   }
@@ -278,13 +298,16 @@ export function ShoppingWorkspace() {
       id: window.crypto.randomUUID(),
       role: "user",
       content: message,
+      at: new Date().toISOString(),
     };
     const replyId = window.crypto.randomUUID();
     setMessages((current) => [
       ...current,
       userEntry,
-      { id: replyId, role: "assistant", content: "", cards: [] },
+      { id: replyId, role: "assistant", content: "", cards: [], at: new Date().toISOString() },
     ]);
+    stickToBottom.current = true;
+    setToolSteps([]);
 
     let nextConversation: ConversationState = {
       ...(conversationOverride ?? conversation),
@@ -387,6 +410,11 @@ export function ShoppingWorkspace() {
       }
     } catch (requestError) {
       if (generation !== chatGeneration.current) return;
+      if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        updateMessage(replyId, { content: replyText ? `${replyText}\n\n⏹ پاسخ‌گیری متوقف شد.` : "پاسخ‌گیری متوقف شد." });
+        setHistory([...nextHistory, ...(replyText ? [{ role: "assistant" as const, content: replyText }] : [])]);
+        return;
+      }
       const messageText = requestError instanceof Error ? requestError.message : "ارتباط قطع شد؛ دوباره تلاش کن.";
       updateMessage(replyId, { content: messageText });
       setHistory([...nextHistory, { role: "assistant", content: messageText }]);
@@ -394,7 +422,7 @@ export function ShoppingWorkspace() {
       if (generation === chatGeneration.current) {
         activeChatRequest.current = null;
         setBusy(false);
-        setActiveTools({});
+        setToolSteps((current) => current.map((step) => ({ ...step, done: true })));
         window.setTimeout(() => composer.current?.focus(), 50);
       }
     }
@@ -406,14 +434,10 @@ export function ShoppingWorkspace() {
     ) {
       if (event.type === "tool_start" && event.callId) {
         const toolLabel = TOOL_LABELS[event.name ?? ""] ?? "در حال بررسی گزینه‌ها";
-        setActiveTools((current) => ({ ...current, [event.callId as string]: toolLabel }));
+        setToolSteps((current) => [...current, { id: event.callId as string, label: toolLabel, done: false }]);
       }
       if (event.type === "tool_end" && event.callId) {
-        setActiveTools((current) => {
-          const updated = { ...current };
-          delete updated[event.callId as string];
-          return updated;
-        });
+        setToolSteps((current) => current.map((step) => step.id === event.callId ? { ...step, done: true } : step));
       }
       if (event.type === "text_delta" && event.text) updateMessage(targetId, { content: event.text });
       if (event.type === "response" && event.response) {
@@ -767,6 +791,14 @@ export function ShoppingWorkspace() {
     setNotice("فیلترها پاک شدند؛ برای به‌روزرسانی نتایج، اعمال فیلترها را بزن.");
   }
 
+  function stopChat() {
+    chatGeneration.current += 1;
+    activeChatRequest.current?.abort();
+    activeChatRequest.current = null;
+    setBusy(false);
+    setToolSteps((current) => current.map((step) => ({ ...step, done: true })));
+  }
+
   function startNewChat() {
     chatGeneration.current += 1;
     activeChatRequest.current?.abort();
@@ -778,7 +810,7 @@ export function ShoppingWorkspace() {
     setDraft("");
     setBusy(false);
     setOffersBusy(false);
-    setActiveTools({});
+    setToolSteps([]);
     setError("");
     setNotice("");
     setMarketplaceError("");
@@ -800,6 +832,13 @@ export function ShoppingWorkspace() {
   function chooseSuggestion(label: string) {
     setDraft(label);
     composer.current?.focus();
+  }
+
+  function copyMessage(id: string, text: string) {
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopiedId(id);
+      window.setTimeout(() => setCopiedId((current) => current === id ? "" : current), 1600);
+    }).catch(() => setNotice("کپی خودکار ممکن نشد؛ متن را دستی انتخاب کن."));
   }
 
   const statusText = {
@@ -831,6 +870,7 @@ export function ShoppingWorkspace() {
         >
           شبیه‌ساز فروشنده ↗
         </a>
+        <ThemeToggle compact />
         <div className={`service-status status-${apiHealth}`} title={statusText}>
           <span className="status-dot" />
           <span>{statusText}</span>
@@ -890,6 +930,24 @@ export function ShoppingWorkspace() {
                             {entry.content}
                           </div>
                         ) : null}
+                        {entry.role === "assistant" && (entry.at || entry.content) && (
+                          <div className="message-meta">
+                            {entry.at && <time>{formatTime(entry.at)}</time>}
+                            {entry.content && (
+                              <button
+                                type="button"
+                                className="copy-message"
+                                onClick={() => copyMessage(entry.id, entry.content)}
+                              >
+                                {copiedId === entry.id ? <Check size={12} /> : <Copy size={12} />}
+                                <span>{copiedId === entry.id ? "کپی شد" : "کپی"}</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {entry.role === "user" && entry.at && (
+                          <div className="message-meta message-meta-user"><time>{formatTime(entry.at)}</time></div>
+                        )}
                         {entry.role === "assistant" && entry.cards && entry.cards.length > 0 && (
                           <ResponseCards
                             cards={entry.cards.filter(isConversationCard)}
@@ -906,16 +964,34 @@ export function ShoppingWorkspace() {
                       </div>
                     </article>
                   ))}
-                  {busy && activeToolText && (
-                    <div className="tool-progress" role="status">
-                      <LoaderCircle size={15} className="spin" />
-                      <span>{activeToolText}</span>
-                      <span className="progress-dots"><i /><i /><i /></span>
+                  {busy && toolSteps.length > 0 && (
+                    <div className="tool-stepper" role="status" aria-label="مراحل انجام کار">
+                      {toolSteps.map((step) => (
+                        <div className={`tool-step ${step.done ? "done" : "running"}`} key={step.id}>
+                          {step.done ? <Check size={13} /> : <LoaderCircle size={13} className="spin" />}
+                          <span>{step.label}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               )}
             </div>
+
+            {!atBottom && (
+              <button
+                type="button"
+                className="jump-to-bottom"
+                onClick={() => {
+                  stickToBottom.current = true;
+                  setAtBottom(true);
+                  scrollArea.current?.scrollTo({ top: scrollArea.current.scrollHeight, behavior: "smooth" });
+                }}
+                aria-label="رفتن به آخرین پیام"
+              >
+                <ArrowDown size={16} />
+              </button>
+            )}
 
             {notice && !busy && (
               <div className="inline-notice" role="status"><Check size={14} />{notice}<button type="button" onClick={() => setNotice("")} aria-label="بستن پیام"><X size={13} /></button></div>
@@ -941,9 +1017,15 @@ export function ShoppingWorkspace() {
                 aria-label="جستجوی کالا یا پیام به راهنمای خرید"
                 disabled={busy}
               />
-              <button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label="شروع جستجو">
-                {busy ? <LoaderCircle size={18} className="spin" /> : <ArrowDownLeft size={19} />}
-              </button>
+              {busy ? (
+                <button className="send-button stop" type="button" onClick={stopChat} aria-label="توقف پاسخ‌گیری" title="توقف پاسخ‌گیری">
+                  <Square size={16} />
+                </button>
+              ) : (
+                <button className="send-button" type="submit" disabled={!draft.trim()} aria-label="شروع جستجو">
+                  <ArrowDownLeft size={19} />
+                </button>
+              )}
             </form>
             <div className="composer-footer">
               <span><MessageCircle size={12} /> هر وقت خواستی، شرایط خریدت را از پنل کنار صفحه تغییر بده.</span>
@@ -994,8 +1076,15 @@ export function ShoppingWorkspace() {
           <span>مناسب خرید حضوری در تهران</span>
         </footer>
       </main>
+      <MobileNav />
     </div>
   );
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("fa-IR", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function WelcomeState({ onChoose }: { onChoose: (suggestion: string) => void }) {

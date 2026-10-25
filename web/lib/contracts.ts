@@ -246,6 +246,7 @@ export interface ChatTurn {
 
 export interface ChatEntry extends ChatTurn {
   id: string;
+  at?: string;
   cards?: AssistantCard[];
   resultsUrl?: string;
 }
