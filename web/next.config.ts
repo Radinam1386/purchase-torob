@@ -5,7 +5,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
   async rewrites() {
-    const apiOrigin = process.env.AGENT_API_INTERNAL ?? "http://localhost:8000";
+    // 127.0.0.1 on purpose: uvicorn binds IPv4 only, and `localhost` may resolve to ::1 first.
+    const apiOrigin = process.env.AGENT_API_INTERNAL ?? "http://127.0.0.1:8000";
     return [{ source: "/api/:path*", destination: `${apiOrigin}/api/:path*` }];
   },
 };
